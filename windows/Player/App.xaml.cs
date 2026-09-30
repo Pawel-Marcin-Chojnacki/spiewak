@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 namespace Spiewak;
+
 public partial class App : Application
 {
     private Window? window;

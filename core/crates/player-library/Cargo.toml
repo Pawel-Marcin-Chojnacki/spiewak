@@ -1,0 +1,10 @@
+[package]
+name = "player-library"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+player-domain = { path = "../player-domain" }
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+lofty = "=0.25.4"

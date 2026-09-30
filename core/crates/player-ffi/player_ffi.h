@@ -1,0 +1,31 @@
+#pragma once
+#include <stdint.h>
+#include <stddef.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct SpiewakCore SpiewakCore;
+typedef struct { int64_t id, parent; const char *name, *path; uint32_t has_children; } SpiewakFolder;
+typedef struct { int64_t id, folder; const char *title, *artist, *album, *path, *artwork, *codec; double duration; uint32_t number, year; } SpiewakTrack;
+/* Read-only header of a larger owned allocation. Never allocate this yourself. */
+typedef struct SpiewakSnapshot {
+ const SpiewakFolder *folders; size_t folder_count;
+ const SpiewakTrack *tracks; size_t track_count;
+ double position; int64_t current_id, current_index; uint64_t revision;
+ uint32_t playing; float volume; const char *error, *message;
+} SpiewakSnapshot;
+uint32_t spiewak_abi_version(void);
+SpiewakCore *spiewak_open(const char *database_path);
+void spiewak_close(SpiewakCore *);
+void spiewak_snapshot_free(SpiewakSnapshot *);
+SpiewakSnapshot *spiewak_folders(SpiewakCore *, int64_t parent);
+SpiewakSnapshot *spiewak_tracks(SpiewakCore *, int64_t folder, uint32_t offset, uint32_t limit);
+SpiewakSnapshot *spiewak_add_root(SpiewakCore *, const char *path);
+SpiewakSnapshot *spiewak_rescan(SpiewakCore *);
+SpiewakSnapshot *spiewak_play_folder(SpiewakCore *, int64_t folder, int64_t track);
+SpiewakSnapshot *spiewak_audio_command(SpiewakCore *, uint32_t command, double value);
+SpiewakSnapshot *spiewak_now(SpiewakCore *);
+SpiewakSnapshot *spiewak_queue(SpiewakCore *);
+#ifdef __cplusplus
+}
+#endif

@@ -1,3 +1,94 @@
-<Window x:Class="Spiewak.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-<Grid Padding="40"><StackPanel Spacing="16"><TextBlock Text="Śpiewak" FontSize="32" FontWeight="SemiBold"/><TextBlock Text="Your folders. Your music." FontSize="20"/><TextBlock x:Name="CoreStatus"/></StackPanel></Grid>
+<Window x:Class="Spiewak.MainWindow"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:native="using:Spiewak.Native">
+<Grid x:Name="Shell" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Loaded="OnLoaded">
+ <Grid.KeyboardAccelerators>
+  <KeyboardAccelerator Key="Space" Invoked="ToggleShortcut" />
+  <KeyboardAccelerator Key="Left" Modifiers="Menu" Invoked="BackShortcut" />
+ </Grid.KeyboardAccelerators>
+ <Grid.RowDefinitions><RowDefinition Height="56"/><RowDefinition Height="*"/><RowDefinition Height="112"/></Grid.RowDefinitions>
+ <Border Grid.Row="0" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="20,0">
+  <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+   <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="10"><FontIcon Glyph="&#xE8D6;" FontSize="20"/><TextBlock Text="Śpiewak" FontSize="19" FontWeight="SemiBold"/></StackPanel>
+   <TextBlock Grid.Column="1" Text="YOUR FOLDERS. YOUR MUSIC." FontSize="11" CharacterSpacing="100" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+   <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+    <ToggleButton x:Name="CompactToggle" Content="Compact" Click="DensityChanged" AutomationProperties.Name="Compact track rows"/>
+    <ToggleButton x:Name="QueueToggle" IsChecked="True" Content="Queue" Click="QueueVisibilityChanged" AutomationProperties.Name="Show queue"/>
+   </StackPanel>
+  </Grid>
+ </Border>
+ <Grid Grid.Row="1">
+  <Grid.ColumnDefinitions><ColumnDefinition Width="238"/><ColumnDefinition Width="*"/><ColumnDefinition x:Name="QueueColumn" Width="272"/></Grid.ColumnDefinitions>
+  <Border BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,0,1,0" Background="{ThemeResource LayerFillColorDefaultBrush}">
+   <Grid Padding="12,20,12,12"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <StackPanel Spacing="12" Margin="8,0,8,18"><TextBlock Text="LIBRARY" FontSize="11" FontWeight="SemiBold" CharacterSpacing="120" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/><TextBlock Text="Folders" FontSize="18" FontWeight="SemiBold"/></StackPanel>
+    <Button Grid.Row="1" x:Name="AddButton" Content="＋ Add music folder" HorizontalAlignment="Stretch" Click="AddFolder" Margin="0,0,0,12"/>
+    <TreeView Grid.Row="2" x:Name="FolderTree" SelectionMode="Single" ItemInvoked="FolderInvoked" Expanding="FolderExpanding" AutomationProperties.Name="Music folders"/>
+    <StackPanel Grid.Row="3" Spacing="8"><ProgressBar x:Name="ScanProgress" IsIndeterminate="True" Visibility="Collapsed"/><Button x:Name="RescanButton" Content="Rescan library" Click="Rescan" HorizontalAlignment="Stretch"/><TextBlock x:Name="LibraryStatus" Text="Ready" FontSize="11" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/></StackPanel>
+   </Grid>
+  </Border>
+  <Grid Grid.Column="1" Padding="24,18,24,8" RowSpacing="14">
+   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+   <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <Button x:Name="BackButton" Click="GoBack" IsEnabled="False" ToolTipService.ToolTip="Back (Alt+Left)" AutomationProperties.Name="Back"><FontIcon Glyph="&#xE72B;" FontSize="14"/></Button>
+    <TextBlock Grid.Column="1" x:Name="Breadcrumb" Text="Library" VerticalAlignment="Center" FontSize="12" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+   </Grid>
+   <Grid Grid.Row="1" ColumnSpacing="20"><Grid.ColumnDefinitions><ColumnDefinition Width="96"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <Border Width="96" Height="96" CornerRadius="4" Background="{ThemeResource ControlFillColorSecondaryBrush}"><Grid><FontIcon Glyph="&#xE8B7;" FontSize="32" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/><Image x:Name="FolderArt" Stretch="UniformToFill"/></Grid></Border>
+    <StackPanel Grid.Column="1" Spacing="7" VerticalAlignment="Center"><TextBlock x:Name="FolderHeading" Text="Make yourself at home" FontSize="28" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock x:Name="FolderSummary" Text="Add a music folder to begin. Your files stay exactly where they are." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/><Button x:Name="PlayFolderButton" Content="▶ Play folder" Click="PlayFolder" IsEnabled="False"/></StackPanel>
+   </Grid>
+   <ListView Grid.Row="2" x:Name="ChildFolders" MaxHeight="170" IsItemClickEnabled="True" ItemClick="ChildFolderClicked" SelectionMode="None" AutomationProperties.Name="Subfolders">
+    <ListView.ItemTemplate><DataTemplate x:DataType="native:Folder"><StackPanel Orientation="Horizontal" Spacing="12" Padding="4,4"><FontIcon Glyph="&#xE8B7;" FontSize="16"/><TextBlock Text="{x:Bind Name}"/></StackPanel></DataTemplate></ListView.ItemTemplate>
+   </ListView>
+   <Grid Grid.Row="3" Padding="12,0" ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="32"/><ColumnDefinition Width="*"/><ColumnDefinition Width="160"/><ColumnDefinition Width="54"/><ColumnDefinition Width="48"/></Grid.ColumnDefinitions>
+    <TextBlock Text="#" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/><TextBlock Grid.Column="1" Text="TITLE / FILE" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/><TextBlock Grid.Column="2" Text="ARTIST" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/><TextBlock Grid.Column="3" Text="CODEC" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/><TextBlock Grid.Column="4" Text="TIME" FontSize="11" HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+   </Grid>
+   <Grid Grid.Row="4">
+    <ListView x:Name="TrackList" SelectionMode="Extended" DoubleTapped="TrackDoubleTapped" KeyDown="TrackKeyDown" SelectionChanged="TrackSelectionChanged" AutomationProperties.Name="Tracks">
+     <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="12,8"/><Setter Property="MinHeight" Value="44"/></Style></ListView.ItemContainerStyle>
+     <ListView.ItemTemplate><DataTemplate x:DataType="native:Track">
+      <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="32"/><ColumnDefinition Width="*"/><ColumnDefinition Width="160"/><ColumnDefinition Width="54"/><ColumnDefinition Width="48"/></Grid.ColumnDefinitions>
+       <TextBlock Text="{x:Bind TrackNumber}" VerticalAlignment="Center" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+       <StackPanel Grid.Column="1" Spacing="2"><TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis"/><TextBlock Text="{x:Bind FileName}" FontSize="11" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/></StackPanel>
+       <TextBlock Grid.Column="2" Text="{x:Bind ArtistLabel}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/><TextBlock Grid.Column="3" Text="{x:Bind Codec}" VerticalAlignment="Center" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/><TextBlock Grid.Column="4" Text="{x:Bind Time}" HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="12"/>
+      </Grid>
+     </DataTemplate></ListView.ItemTemplate>
+     <ListView.ContextFlyout><MenuFlyout><MenuFlyoutItem Text="Play" Click="PlaySelected"/><MenuFlyoutItem Text="Show in Explorer" Click="ShowSelected"/></MenuFlyout></ListView.ContextFlyout>
+    </ListView>
+    <TextBlock x:Name="EmptyState" Text="Your collection starts with a folder." HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+   </Grid>
+   <StackPanel Grid.Row="5" Spacing="8"><Button x:Name="MoreButton" Content="Load more tracks" Click="LoadMore" Visibility="Collapsed"/><InfoBar x:Name="ErrorBar" IsOpen="False" Severity="Error" IsClosable="True"/></StackPanel>
+  </Grid>
+  <Border Grid.Column="2" x:Name="QueuePanel" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="1,0,0,0" Background="{ThemeResource LayerFillColorDefaultBrush}">
+   <Grid Padding="18,20" RowSpacing="16"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <StackPanel Spacing="8"><TextBlock Text="UP NEXT" FontWeight="SemiBold" FontSize="11" CharacterSpacing="120"/><TextBlock x:Name="QueueSummary" Text="Play a track to build your queue." FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/></StackPanel>
+    <ListView Grid.Row="1" x:Name="QueueList" SelectionMode="Single" DoubleTapped="QueueDoubleTapped" AutomationProperties.Name="Playback queue">
+     <ListView.ItemTemplate><DataTemplate x:DataType="native:Track"><StackPanel Padding="0,6" Spacing="3"><TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis"/><TextBlock Text="{x:Bind ArtistLabel}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis"/></StackPanel></DataTemplate></ListView.ItemTemplate>
+    </ListView>
+    <StackPanel Grid.Row="2" Spacing="8"><TextBlock Text="FILE" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/><TextBlock x:Name="InspectorPath" Text="Select a track to inspect its location." FontSize="11" TextWrapping="Wrap" IsTextSelectionEnabled="True" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/><TextBlock x:Name="InspectorAlbum" FontSize="11" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/></StackPanel>
+   </Grid>
+  </Border>
+ </Grid>
+ <Border Grid.Row="2" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Background="{ThemeResource LayerFillColorDefaultBrush}" Padding="20,12">
+  <Grid ColumnSpacing="24"><Grid.ColumnDefinitions><ColumnDefinition Width="300"/><ColumnDefinition Width="*"/><ColumnDefinition Width="170"/></Grid.ColumnDefinitions>
+   <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="56"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <Border Width="56" Height="56" CornerRadius="3" Background="{ThemeResource ControlFillColorSecondaryBrush}"><Grid><FontIcon Glyph="&#xE8D6;" FontSize="24"/><Image x:Name="PlayingArt" Stretch="UniformToFill"/></Grid></Border>
+    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4"><TextBlock x:Name="PlayingTitle" Text="Nothing playing" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock x:Name="PlayingArtist" Text="Choose something from your folders" FontSize="12" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/></StackPanel>
+   </Grid>
+   <StackPanel Grid.Column="1" Spacing="0" VerticalAlignment="Center">
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8">
+     <Button Click="Previous" AutomationProperties.Name="Previous track" ToolTipService.ToolTip="Previous"><FontIcon Glyph="&#xE892;" FontSize="16"/></Button>
+     <Button Click="TogglePlayback" AutomationProperties.Name="Play or pause" ToolTipService.ToolTip="Play / pause (Space)"><FontIcon x:Name="PlayIcon" Glyph="&#xE768;" FontSize="18"/></Button>
+     <Button Click="Next" AutomationProperties.Name="Next track" ToolTipService.ToolTip="Next"><FontIcon Glyph="&#xE893;" FontSize="16"/></Button>
+     <Button Click="Stop" AutomationProperties.Name="Stop playback" ToolTipService.ToolTip="Stop"><FontIcon Glyph="&#xE71A;" FontSize="13"/></Button>
+    </StackPanel>
+    <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="42"/><ColumnDefinition Width="*"/><ColumnDefinition Width="42"/></Grid.ColumnDefinitions>
+     <TextBlock x:Name="PositionText" Text="0:00" VerticalAlignment="Center" FontSize="11"/><Slider x:Name="SeekSlider" Grid.Column="1" IsEnabled="False" Minimum="0" Maximum="1" StepFrequency="0.1" ValueChanged="SeekChanged" AutomationProperties.Name="Playback position"/><TextBlock x:Name="DurationText" Grid.Column="2" Text="0:00" VerticalAlignment="Center" FontSize="11" HorizontalAlignment="Right"/>
+    </Grid>
+   </StackPanel>
+   <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Spacing="10"><FontIcon Glyph="&#xE767;" FontSize="17"/><Slider x:Name="VolumeSlider" Width="130" Minimum="0" Maximum="100" Value="75" ValueChanged="VolumeChanged" AutomationProperties.Name="Volume"/></StackPanel>
+  </Grid>
+ </Border>
+</Grid>
 </Window>

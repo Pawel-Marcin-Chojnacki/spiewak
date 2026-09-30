@@ -7,3 +7,8 @@ license.workspace = true
 [lib]
 name = "spiewak_core"
 crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+player-domain = { path = "../player-domain" }
+player-library = { path = "../player-library" }
+player-audio = { path = "../player-audio" }

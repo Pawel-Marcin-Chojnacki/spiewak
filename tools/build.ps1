@@ -29,3 +29,11 @@ $msbuild=Join-Path $vs "MSBuild\Current\Bin\$hostArch\MSBuild.exe"
 if(!(Test-Path $msbuild)){$msbuild=Join-Path $vs 'MSBuild\Current\Bin\MSBuild.exe'}
 & $msbuild "$root\windows\Player\Player.csproj" /restore /m /v:minimal /nologo /p:Configuration=Release "/p:Platform=$Architecture" "/p:RustTarget=$target"
 if($LASTEXITCODE -ne 0){throw 'WinUI build failed'}
+
+$dotnet='dotnet'
+if($Architecture -eq 'x64' -and $env:PROCESSOR_ARCHITECTURE -eq 'ARM64'){
+ $dotnet=Join-Path $env:ProgramFiles 'dotnet\x64\dotnet.exe'
+ if(!(Test-Path $dotnet)){throw 'Install the x64 .NET 10 SDK to run x64 native integration tests on ARM64.'}
+}
+& $dotnet run --project "$root\tests\Core.Smoke\Core.Smoke.csproj" -c Release -- "$root\core\target\$target\release\spiewak_core.dll"
+if($LASTEXITCODE -ne 0){throw 'Native integration smoke test failed'}
