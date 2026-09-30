@@ -1,0 +1,17 @@
+**/target/
+**/bin/
+**/obj/
+.vs/
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.pfx
+*.pem
+*.key
+artifacts/
+
+._*
+.DS_Store

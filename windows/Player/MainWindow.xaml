@@ -1,0 +1,3 @@
+<Window x:Class="Spiewak.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+<Grid Padding="40"><StackPanel Spacing="16"><TextBlock Text="Śpiewak" FontSize="32" FontWeight="SemiBold"/><TextBlock Text="Your folders. Your music." FontSize="20"/><TextBlock x:Name="CoreStatus"/></StackPanel></Grid>
+</Window>
