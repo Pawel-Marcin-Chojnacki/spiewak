@@ -1,4 +1,4 @@
-# Verified status — first vertical slice
+# Verified status — player milestones
 
 As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/first playback milestone, not the complete product roadmap.
 
@@ -14,7 +14,7 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 
 ## Verification
 
-- Rust: six unit/integration tests; fmt and clippy with warnings denied.
+- Rust: twelve unit/integration tests; fmt and clippy with warnings denied.
 - Release WinUI build on ARM64; native shell visually inspected in actual VM screenshots.
 - C# ↔ Rust smoke: Unicode paths, actual WAV metadata/tags, folder fidelity, IDs across rescan/restart, external rename/delete, SHA-256 music preservation.
 - Codec integration: generated MP3, FLAC, AAC/M4A, ALAC, Ogg Vorbis and WAV fixtures all index, decode/play and seek successfully on Windows ARM64. Corrupt audio returns an error while previous audio/queue continue. FFmpeg 9.0.2 installed via winget for fixture generation only.
@@ -24,12 +24,12 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 ## Current limits / next work
 
 - No Opus decoder in pinned Rodio/Symphonia graph. Files are indexed but playback reports an error.
-- No watcher, incremental event synchronization or stable file IDs across rename/move yet; use Rescan. No album classification or derived album/artist catalog.
+- Native watcher and stable IDs within one root/volume are implemented. Reconciliation still walks roots in batches; per-event incremental updates, cross-root/cross-volume identity and network performance are open. No album classification or derived album/artist catalog.
 - No embedded-artwork extraction/cache, tag editing, Smart Inbox, provider integrations or Undo. All file mutation is absent/disabled.
 - No gapless guarantee, ReplayGain, output-device selector or global media keys. Mute is implemented.
 - Mixed queues, selection append/play-next, upcoming edits/clear, queue jump, shuffle upcoming, repeat off/queue/track and mute are implemented. Restart queue persistence remains open.
-- Tree expansion/layout/density are not persisted; no resizable left panel or forward navigation.
-- Native extended selection exists; batch Play/Play next/Add to queue are implemented; playlist/tag actions remain open. Full accessibility/high contrast/high-DPI/multi-monitor review and 1k/10k/100k benchmarks remain open.
+- Tree expansion/layout/density are not persisted; no resizable left panel. Forward navigation is implemented.
+- Native extended selection exists; batch Play/Play next/Add to queue are implemented; playlist actions are implemented; tag editing remains open. Full accessibility/high contrast/high-DPI/multi-monitor review and 1k/10k/100k benchmarks remain open.
 - Unpackaged self-contained developer build; proper installer/update/diagnostic export is later work.
 
 ## Reproduction
@@ -67,3 +67,13 @@ SQLite schema 3 stores ordered playlists, including duplicate occurrences. Creat
 ## Product research
 
 Source-linked research of ten player references, praise and friction from public user discussions, implementation priorities and acceptance scenarios is in research/music-players-2026-10-01.md. Household user requirements are pending the owner’s details. Final UI/UX work should preserve the semantic theme boundary and validate these actual workflows.
+
+## Library synchronization milestone
+
+SQLite schema 4 stores Windows volume/file ID plus creation time for tracks and directories. Rename/move within a single root on the same volume keeps IDs, playlist references and folder ownership. Schema 5 prevents reuse of deleted track/folder IDs, so an old runtime queue cannot silently resolve to an unrelated new song. Hard links remain separate entries; ambiguous matches and occupied destinations are not merged. Unsupported identity APIs use path matching. Root renames, moves across roots/volumes and delete/recreate identity are not certified.
+
+Rust owns a debounced notify 8.2.0 native watcher (750 ms quiet period, 8 s burst cap), maintenance of root watches, a 60 s reconciliation safety net and 30 s retry for failed watches. Notification overflow requests a scan. Missing roots preserve the cached index; restored roots are watched again. The watcher batches root walks and skips unchanged tag parsing; it is not the plan's final fully incremental scanner. Unchanged scans do not refresh the view. WinUI polls a revision and refreshes the active folder/search/playlist plus queue metadata; the playing audio source is kept open. Tree expansion and loaded pages can reset during a refresh; scroll-position persistence remains open.
+
+Twelve Rust tests, fmt/clippy with warnings denied, ARM64 WinUI Release and C# ABI tests pass. Real NTFS creation/deletion/file rename/album rename, hard-link separation, case-only rename, unavailable/restored roots and playlist last-known paths are checked. Windows audio verifies that refreshing a renamed upcoming file preserves playback position and that Next opens its new path. These are native filesystem/core checks; guest UI input workflows remain unverified.
+
+Latest demo build launched successfully in the Windows console session. Additional visual inspection was unavailable because macOS was locked; unlocking it is required for further native UI input checks.

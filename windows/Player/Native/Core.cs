@@ -36,6 +36,9 @@ internal static class NativeMethods
     [DllImport(Dll, EntryPoint = "spiewak_close", CallingConvention = CallingConvention.Cdecl)] internal static extern void Close(nint handle);
     [DllImport(Dll, EntryPoint = "spiewak_snapshot_free", CallingConvention = CallingConvention.Cdecl)] internal static extern void Free(nint snapshot);
     [DllImport(Dll, EntryPoint = "spiewak_folders", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Folders(CoreHandle core, long parent);
+    [DllImport(Dll, EntryPoint = "spiewak_library_state", CallingConvention = CallingConvention.Cdecl)] internal static extern nint LibraryState(CoreHandle core);
+    [DllImport(Dll, EntryPoint = "spiewak_folder", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Folder(CoreHandle core, long id);
+    [DllImport(Dll, EntryPoint = "spiewak_refresh_queue", CallingConvention = CallingConvention.Cdecl)] internal static extern nint RefreshQueue(CoreHandle core);
     [DllImport(Dll, EntryPoint = "spiewak_tracks", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Tracks(CoreHandle core, long folder, uint offset, uint limit);
     [DllImport(Dll, EntryPoint = "spiewak_add_root", CallingConvention = CallingConvention.Cdecl)] internal static extern nint AddRoot(CoreHandle core, [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
     [DllImport(Dll, EntryPoint = "spiewak_rescan", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Rescan(CoreHandle core);
@@ -109,6 +112,9 @@ public sealed class Core : IDisposable
     { var result = Read(pointer); if (result.Error.Length > 0) throw new InvalidOperationException(result.Error); return result; }
     public Result Folders(long parent = 0) => Checked(NativeMethods.Folders(handle, parent));
     public Result Tracks(long folder, uint offset = 0, uint sort = 0) => Checked(NativeMethods.Sorted(handle, folder, offset, 500, sort));
+    public Result LibraryState() => Checked(NativeMethods.LibraryState(handle));
+    public Result Folder(long id) => Checked(NativeMethods.Folder(handle, id));
+    public Result RefreshQueue() => Checked(NativeMethods.RefreshQueue(handle));
     public Result AddRoot(string path) => Checked(NativeMethods.AddRoot(handle, path));
     public Result Rescan() => Checked(NativeMethods.Rescan(handle));
     public Result Play(long folder, long track, uint sort = 0) => Checked(NativeMethods.PlayView(handle, folder, track, sort));

@@ -40,6 +40,11 @@ SpiewakSnapshot *spiewak_playlists(SpiewakCore *);
 SpiewakSnapshot *spiewak_playlist_tracks(SpiewakCore *, int64_t id, uint32_t offset);
 SpiewakSnapshot *spiewak_playlist_command(SpiewakCore *, int64_t id, uint32_t command, const char *name, const int64_t *ids, size_t count, uint32_t index);
 SpiewakSnapshot *spiewak_play_playlist(SpiewakCore *, int64_t id, uint32_t index);
+
+/* Notification revision/status; flags bit 0 means all registered roots are watched. */
+SpiewakSnapshot *spiewak_library_state(SpiewakCore *core);
+SpiewakSnapshot *spiewak_folder(SpiewakCore *core, int64_t id);
+SpiewakSnapshot *spiewak_refresh_queue(SpiewakCore *core);
 #ifdef __cplusplus
 }
 #endif

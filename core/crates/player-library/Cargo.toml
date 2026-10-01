@@ -8,3 +8,4 @@ license.workspace = true
 player-domain = { path = "../player-domain" }
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 lofty = "=0.25.4"
+notify = { version = "=8.2.0", default-features = false }

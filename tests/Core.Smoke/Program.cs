@@ -95,9 +95,41 @@ try
         }
         core.Rescan(); Assert(core.Tracks(folderId).Tracks[0].Id == trackId, "IDs survive unchanged reconciliation");
         Assert(before.SequenceEqual(SHA256.HashData(File.ReadAllBytes(one))), "Scanner does not change music bytes");
-        var moved = Path.Combine(album, "03 - Renamed.wav"); File.Move(two, moved); core.Rescan(); Assert(core.Tracks(folderId).Tracks.Count == 2, "External rename reconciles");
-        Assert(core.Search("renam").Tracks.Count == 1, "Renamed filename updates FTS");
+        await Wait(() => (core.LibraryState().Flags & 1) != 0, "Native watcher attached to music roots");
+        var eveningId = tracks[1].Id;
+        var moved = Path.Combine(album, "03 - Renamed.wav"); File.Move(two, moved);
+        await Wait(() => core.Search("renam").Tracks.Count == 1, "External rename automatically updates FTS without Rescan");
+        Assert(core.Search("renam").Tracks.Single().Id == eveningId, "Windows file identity survives rename");
+        Assert(core.PlaylistTracks(playlistId).Tracks.Single(t => t.Id == eveningId).Path == moved, "Playlist follows renamed file");
+        var renamedAlbum = Path.Combine(Path.GetDirectoryName(album)!, "Renamed Album"); Directory.Move(album, renamedAlbum);
+        moved = Path.Combine(renamedAlbum, Path.GetFileName(moved)); one = Path.Combine(renamedAlbum, Path.GetFileName(one));
+        await Wait(() => core.Folder(folderId).Folders.Single().Path == renamedAlbum, "Folder rename preserves ID and automatically updates hierarchy");
+        Assert(core.Tracks(folderId).Tracks.Single(t => t.Id == eveningId).Path == moved, "Tracks retain IDs after album move");
+        var added = Path.Combine(renamedAlbum, "04 - Added.wav"); Wave(added, 550);
+        await Wait(() => core.Tracks(folderId).Tracks.Count == 3, "External file creation synchronized without Rescan");
+        var addedId = core.Tracks(folderId).Tracks.Single(t => t.Path == added).Id;
+        File.Delete(added); await Wait(() => core.Tracks(folderId).Tracks.Count == 2, "External deletion synchronized");
+        Wave(added, 550); await Wait(() => core.Tracks(folderId).Tracks.Count == 3, "New file at deleted path synchronized");
+        Assert(core.Tracks(folderId).Tracks.Single(t => t.Path == added).Id != addedId, "Deleted IDs are never reused for new tracks");
+        File.Delete(added); await Wait(() => core.Tracks(folderId).Tracks.Count == 2, "Replacement fixture removed");
+        core.RefreshQueue();
+        if (args.Contains("--audio"))
+        {
+            core.Play(folderId, trackId); await Wait(() => core.Now().Playing && core.Now().Position > 0.2, "Playback before queued file rename");
+            var renamedAgain = Path.Combine(renamedAlbum, "05 - Another.wav"); File.Move(moved, renamedAgain); moved = renamedAgain;
+            await Wait(() => core.Tracks(folderId).Tracks.Single(t => t.Id == eveningId).Path == renamedAgain, "Upcoming file rename synchronized");
+            var position = core.Now().Position; core.RefreshQueue(); await Task.Delay(150);
+            Assert(core.Now().Playing && core.Now().Position >= position, "Queue refresh preserves playing source and position");
+            core.Command(3); await Wait(() => core.Now().Playing && core.Now().CurrentId == eveningId, "Next uses refreshed queue path"); core.Command(2);
+        }
         File.Delete(moved);
+        await Wait(() => core.PlaylistTracks(playlistId).Tracks.Any(t => t.Id == 0 && t.Path == moved), "Deleted playlist occurrence retains last known path");
+        Assert(before.SequenceEqual(SHA256.HashData(File.ReadAllBytes(one))), "Synchronization preserves music bytes after moves");
+        var offline = music + " offline"; Directory.Move(music, offline);
+        await Wait(() => (core.LibraryState().Flags & 1) == 0, "Unavailable root detected by watcher maintenance");
+        Assert(core.Tracks(folderId).Tracks.Single().Id == trackId, "Unavailable root retains cached tracks and playlist links");
+        Directory.Move(offline, music);
+        await Wait(() => (core.LibraryState().Flags & 1) != 0, "Restored root automatically watched again");
     }
     using (var core = new Core(db)) { Assert(core.Playlists().Playlists.Single().Count == 2, "Playlist survives restart"); core.Rescan(); Assert(core.PlaylistTracks(playlistId).Tracks.Any(t => t.Id == 0), "Unavailable playlist entry remains visible"); Assert(core.Tracks(folderId).Tracks.Count == 1 && core.Tracks(folderId).Tracks[0].Id == trackId, "Cache persists and external delete reconciles after restart"); }
     Console.WriteLine("PASS: native Rust ↔ C# vertical slice" + (args.Contains("--audio") ? " including Windows audio" : " (audio skipped)"));

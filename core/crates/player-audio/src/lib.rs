@@ -36,6 +36,7 @@ pub enum Command {
     Move(usize, bool),
     Clear,
     Jump(usize),
+    Refresh(Vec<Track>),
 }
 type Request = (Command, mpsc::Sender<Result<(), String>>);
 pub struct Audio {
@@ -129,6 +130,18 @@ impl Audio {
                                 }
                             }
                             Command::Append(tracks, next) => queue.append(tracks, next),
+                            Command::Refresh(tracks) => {
+                                let refreshed = tracks
+                                    .into_iter()
+                                    .map(|t| (t.id, t))
+                                    .collect::<std::collections::HashMap<_, _>>();
+                                queue.tracks = queue
+                                    .tracks
+                                    .iter()
+                                    .map(|t| refreshed.get(&t.id).unwrap_or(t).clone())
+                                    .collect::<Vec<_>>()
+                                    .into();
+                            }
                             Command::Mute => {
                                 muted = !muted;
                                 if let Some(p) = &player {

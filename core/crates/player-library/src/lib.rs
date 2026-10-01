@@ -4,7 +4,10 @@ use lofty::{
     tag::{Accessor, ItemKey},
 };
 use player_domain::{Folder, Track};
+mod identity;
+mod monitor;
 mod playlists;
+pub use monitor::Monitor;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::{
     fs,
@@ -19,6 +22,7 @@ pub struct Library {
 #[derive(Default, Debug)]
 pub struct ScanReport {
     pub tracks: u64,
+    pub changed: bool,
     pub warnings: Vec<String>,
 }
 
@@ -108,7 +112,7 @@ impl Library {
         let schema_version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if schema_version > 3 {
+        if schema_version > 5 {
             return Err("This library cache belongs to a newer version of Spiewak. Update the app before opening it.".into());
         }
         db.busy_timeout(std::time::Duration::from_secs(10))
@@ -144,6 +148,27 @@ impl Library {
               CREATE TABLE IF NOT EXISTS playlist_items(id INTEGER PRIMARY KEY,playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,track_id INTEGER REFERENCES tracks(id) ON DELETE SET NULL,path TEXT NOT NULL,title TEXT NOT NULL,artist TEXT NOT NULL,album TEXT NOT NULL,position INTEGER NOT NULL);
               CREATE INDEX IF NOT EXISTS playlist_order ON playlist_items(playlist_id,position,id);
               PRAGMA user_version=3; RELEASE migration;").map_err(|e|e.to_string())?;
+        }
+        if schema_version < 4 {
+            db.execute_batch("SAVEPOINT migration;
+              ALTER TABLE folders ADD COLUMN file_identity TEXT;
+              ALTER TABLE tracks ADD COLUMN file_identity TEXT;
+              CREATE INDEX folder_identity ON folders(file_identity);
+              CREATE INDEX track_identity ON tracks(file_identity);
+              CREATE TRIGGER playlist_track_snapshot BEFORE DELETE ON tracks BEGIN
+                UPDATE playlist_items SET path=old.path,title=old.title,artist=old.artist,album=old.album WHERE track_id=old.id;
+              END;
+              PRAGMA user_version=4; RELEASE migration;").map_err(|e|e.to_string())?;
+        }
+        if schema_version < 5 {
+            db.execute_batch(
+                "SAVEPOINT migration;
+              CREATE TABLE entity_ids(kind TEXT PRIMARY KEY,value INTEGER NOT NULL);
+              INSERT INTO entity_ids SELECT 'folders',coalesce(max(id),0) FROM folders;
+              INSERT INTO entity_ids SELECT 'tracks',coalesce(max(id),0) FROM tracks;
+              PRAGMA user_version=5; RELEASE migration;",
+            )
+            .map_err(|e| e.to_string())?;
         }
         Ok(Self { db })
     }
@@ -187,6 +212,7 @@ impl Library {
             match self.scan_root(&root) {
                 Ok(r) => {
                     report.tracks += r.tracks;
+                    report.changed |= r.changed;
                     report.warnings.extend(r.warnings)
                 }
                 Err(e) => report.warnings.push(e),
@@ -229,7 +255,22 @@ impl Library {
                     .file_name()
                     .unwrap_or(folder.as_os_str())
                     .to_string_lossy();
-                self.db.execute("INSERT INTO folders(root_id,parent_id,name,path,epoch) VALUES(?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET name=excluded.name,parent_id=excluded.parent_id,epoch=excluded.epoch",params![root_id,parent,name,folder_path,epoch]).map_err(|e|e.to_string())?;
+                let previous: Option<(String, Option<i64>)> = self
+                    .db
+                    .query_row(
+                        "SELECT name,parent_id FROM folders WHERE path=?",
+                        [&folder_path],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()
+                    .map_err(|e| e.to_string())?;
+                report.changed |= previous.as_ref().is_none_or(|(old_name, old_parent)| {
+                    old_name != name.as_ref() || *old_parent != parent
+                });
+                let identity = identity::file_identity(&folder);
+                self.relocate("folders", &folder_path, identity.as_deref(), root_id)?;
+                let id = self.row_id("folders", &folder_path)?;
+                self.db.execute("INSERT INTO folders(id,root_id,parent_id,name,path,epoch,file_identity) VALUES(?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET path=excluded.path,name=excluded.name,parent_id=excluded.parent_id,epoch=excluded.epoch,file_identity=excluded.file_identity",params![id,root_id,parent,name,folder_path,epoch,identity]).map_err(|e|e.to_string())?;
                 let folder_id: i64 = self
                     .db
                     .query_row("SELECT id FROM folders WHERE path=?", [&folder_path], |r| {
@@ -281,37 +322,47 @@ impl Library {
                     report.tracks += 1;
                     let stored_path = display_path(&path);
                     let modified = stamp(&meta);
-                    let old: Option<(i64, i64)> = self
+                    let identity = identity::file_identity(&path);
+                    self.relocate("tracks", &stored_path, identity.as_deref(), root_id)?;
+                    let old: Option<(i64, i64, String)> = self
                         .db
                         .query_row(
-                            "SELECT size,modified FROM tracks WHERE path=?",
+                            "SELECT size,modified,artwork FROM tracks WHERE path=?",
                             [&stored_path],
-                            |r| Ok((r.get(0)?, r.get(1)?)),
+                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                         )
                         .optional()
                         .map_err(|e| e.to_string())?;
-                    if old == Some((meta.len() as i64, modified)) {
+                    let cover = artwork(&folder);
+                    if old.as_ref().is_some_and(|(size, time, _)| {
+                        *size == meta.len() as i64 && *time == modified
+                    }) {
+                        report.changed |= old.as_ref().is_some_and(|(_, _, art)| art != &cover);
                         self.db
                             .execute(
-                                "UPDATE tracks SET epoch=?,artwork=? WHERE path=?",
-                                params![epoch, artwork(&folder), stored_path],
+                                "UPDATE tracks SET epoch=?,artwork=?,file_identity=? WHERE path=?",
+                                params![epoch, cover, identity, stored_path],
                             )
                             .map_err(|e| e.to_string())?;
                         continue;
                     }
+                    report.changed = true;
                     let t = read_track(&path, folder_id);
-                    self.db.execute("INSERT INTO tracks(folder_id,path,title,artist,album,album_artist,artwork,codec,duration,number,year,size,modified,epoch) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET folder_id=excluded.folder_id,title=excluded.title,artist=excluded.artist,album=excluded.album,album_artist=excluded.album_artist,artwork=excluded.artwork,codec=excluded.codec,duration=excluded.duration,number=excluded.number,year=excluded.year,size=excluded.size,modified=excluded.modified,epoch=excluded.epoch",params![t.folder_id,t.path,t.title,t.artist,t.album,t.album_artist,t.artwork,t.codec,t.duration,t.number,t.year,meta.len() as i64,modified,epoch]).map_err(|e|e.to_string())?;
+                    let id = self.row_id("tracks", &stored_path)?;
+                    self.db.execute("INSERT INTO tracks(id,folder_id,path,title,artist,album,album_artist,artwork,codec,duration,number,year,size,modified,epoch,file_identity) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET folder_id=excluded.folder_id,title=excluded.title,artist=excluded.artist,album=excluded.album,album_artist=excluded.album_artist,artwork=excluded.artwork,codec=excluded.codec,duration=excluded.duration,number=excluded.number,year=excluded.year,size=excluded.size,modified=excluded.modified,epoch=excluded.epoch,file_identity=excluded.file_identity",params![id,t.folder_id,t.path,t.title,t.artist,t.album,t.album_artist,t.artwork,t.codec,t.duration,t.number,t.year,meta.len() as i64,modified,epoch,identity]).map_err(|e|e.to_string())?;
                 }
             }
             // A partially unreadable root must not make cached tracks disappear.
             if report.warnings.is_empty() {
-                self.db.execute("DELETE FROM tracks WHERE epoch!=? AND folder_id IN (SELECT id FROM folders WHERE root_id=?)",params![epoch,root_id]).map_err(|e|e.to_string())?;
-                self.db
+                report.changed |= self.db.execute("DELETE FROM tracks WHERE epoch!=? AND folder_id IN (SELECT id FROM folders WHERE root_id=?)",params![epoch,root_id]).map_err(|e|e.to_string())? > 0;
+                report.changed |= self
+                    .db
                     .execute(
                         "DELETE FROM folders WHERE root_id=? AND epoch!=?",
                         params![root_id, epoch],
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| e.to_string())?
+                    > 0;
             }
             Ok(())
         })();
@@ -324,6 +375,98 @@ impl Library {
         }
         .map_err(|e| e.to_string())?;
         Ok(report)
+    }
+    // SQLite INTEGER PRIMARY KEY can reuse a deleted highest ID. Runtime queues must
+    // never accidentally resolve that old ID to an unrelated newly indexed song.
+    fn row_id(&self, table: &str, path: &str) -> Result<i64> {
+        let existing = self
+            .db
+            .query_row(
+                &format!("SELECT id FROM {table} WHERE path=?"),
+                [path],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some(id) = existing {
+            return Ok(id);
+        }
+        self.db
+            .query_row(
+                "UPDATE entity_ids SET value=value+1 WHERE kind=? RETURNING value",
+                [table],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())
+    }
+    // Match only a disappeared path in the same root. Hard links remain separate rows.
+    // Creation time is part of identity to reduce accidental reuse of a deleted file ID.
+    fn relocate(&self, table: &str, path: &str, identity: Option<&str>, root: i64) -> Result<()> {
+        let Some(identity) = identity else {
+            return Ok(());
+        };
+        let scope = if table == "tracks" {
+            "folder_id IN (SELECT id FROM folders WHERE root_id=?)"
+        } else {
+            "root_id=?"
+        };
+        let sql = format!("SELECT id,path FROM {table} WHERE file_identity=? AND {scope}");
+        let mut stmt = self.db.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![identity, root], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        if let Some((id, old)) = rows.iter().find(|(_, old)| old.eq_ignore_ascii_case(path)) {
+            if old != path {
+                let refresh = if table == "tracks" {
+                    ",modified=-1"
+                } else {
+                    ""
+                };
+                self.db
+                    .execute(
+                        &format!("UPDATE {table} SET path=?{refresh} WHERE id=?"),
+                        params![path, id],
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+            return Ok(());
+        }
+        let missing = rows
+            .iter()
+            .filter(|(_, old)| !Path::new(old).exists())
+            .collect::<Vec<_>>();
+        if let [candidate] = missing.as_slice() {
+            // Do not overwrite an existing different file at the destination.
+            let occupied: bool = self
+                .db
+                .query_row(
+                    &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE path=?)"),
+                    [path],
+                    |r| r.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            if !occupied {
+                let refresh = if table == "tracks" {
+                    ",modified=-1"
+                } else {
+                    ""
+                };
+                self.db
+                    .execute(
+                        &format!("UPDATE {table} SET path=?{refresh} WHERE id=?"),
+                        params![path, candidate.0],
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+    pub fn folder(&self, id: i64) -> Result<Option<Folder>> {
+        self.db.query_row("SELECT f.id,coalesce(f.parent_id,0),f.name,f.path,EXISTS(SELECT 1 FROM folders c WHERE c.parent_id=f.id) FROM folders f WHERE f.id=?", [id], |r| Ok(Folder { id:r.get(0)?,parent_id:r.get(1)?,name:r.get(2)?,path:r.get(3)?,has_children:r.get(4)? })).optional().map_err(|e|e.to_string())
     }
     pub fn selected_tracks(&self, ids: &[i64]) -> Result<Vec<Track>> {
         if ids.is_empty() || ids.len() > 100_000 {
@@ -511,6 +654,55 @@ mod tests {
         let lib = Library::open(&p.join("index.db")).unwrap();
         lib.reconcile().unwrap();
         assert_eq!(lib.tracks(folders[0].id, 0, 500).unwrap().len(), 1);
+        drop(lib);
+        fs::remove_dir_all(p).unwrap();
+    }
+    #[cfg(windows)]
+    #[test]
+    fn file_identity_preserves_case_renames_and_distinguishes_hard_links() {
+        let p = sandbox();
+        let root = p.join("Music");
+        fs::create_dir(&root).unwrap();
+        let original = root.join("Song.wav");
+        wav(&original);
+        let linked = root.join("Linked.wav");
+        fs::hard_link(&original, &linked).unwrap();
+        let lib = Library::open(&p.join("cache.db")).unwrap();
+        lib.add_root(&root).unwrap();
+        let folder = lib.folders(0).unwrap()[0].id;
+        let rows = lib.tracks(folder, 0, 500).unwrap();
+        let song = rows
+            .iter()
+            .find(|t| t.path.ends_with("Song.wav"))
+            .unwrap()
+            .id;
+        let link = rows
+            .iter()
+            .find(|t| t.path.ends_with("Linked.wav"))
+            .unwrap()
+            .id;
+        assert_ne!(song, link);
+        let renamed = root.join("song.wav");
+        fs::rename(&original, &renamed).unwrap();
+        lib.reconcile().unwrap();
+        assert_eq!(
+            lib.selected_tracks(&[song]).unwrap()[0].path,
+            display_path(&renamed)
+        );
+        let other = root.join("Other");
+        fs::create_dir(&other).unwrap();
+        let moved = other.join("Moved.wav");
+        fs::rename(&renamed, &moved).unwrap();
+        lib.reconcile().unwrap();
+        assert_eq!(
+            lib.selected_tracks(&[song]).unwrap()[0].path,
+            display_path(&moved)
+        );
+        assert_eq!(
+            lib.selected_tracks(&[link]).unwrap()[0].path,
+            display_path(&linked)
+        );
+        assert!(!lib.reconcile().unwrap().changed);
         drop(lib);
         fs::remove_dir_all(p).unwrap();
     }

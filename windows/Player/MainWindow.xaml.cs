@@ -25,6 +25,8 @@ public partial class MainWindow : Window
     private double? pendingSeek;
     private readonly DispatcherTimer seekTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     private int navigationVersion;
+    private ulong libraryRevision;
+    private int libraryPollTick;
     public MainWindow()
     {
         InitializeComponent();
@@ -119,9 +121,7 @@ public partial class MainWindow : Window
         try
         {
             var result = await Task.Run(() => path is null ? core.Rescan() : core.AddRoot(path)); if (closed) return;
-            LibraryStatus.Text = result.Message; await ReloadTree();
-            if (currentFolder is not null) await Browse(currentFolder, false);
-            else { var roots = await Task.Run(() => core.Folders()); if (roots.Folders.Count > 0) await Browse(roots.Folders[0], false); }
+            LibraryStatus.Text = result.Message; await RefreshLibraryView();
         }
         catch (Exception e) { LibraryStatus.Text = "Scan could not finish"; Error(e); }
         finally { if (!closed) { scanning = false; AddButton.IsEnabled = true; RescanButton.IsEnabled = true; ScanProgress.Visibility = Visibility.Collapsed; } }
@@ -181,13 +181,14 @@ public partial class MainWindow : Window
         if (core is null || polling || closed) return; polling = true;
         try
         {
+            if (++libraryPollTick % 4 == 0 && !scanning) await PollLibrary();
             var state = await Task.Run(() => core.Now()); if (closed) return;
             if (state.Error.Length > 0 && state.Error != shownAudioError) { ErrorBar.Message = state.Error; ErrorBar.IsOpen = true; }
             shownAudioError = state.Error;
             MuteIcon.Glyph = (state.Flags & 1) != 0 ? "\uE74F" : "\uE767";
             RepeatLabel.Text = ((state.Flags >> 1) & 3) switch { 1 => "↻∞", 2 => "↻1", _ => "↻" };
             var track = state.Tracks.FirstOrDefault();
-            if (playingId != state.CurrentId) { playingId = state.CurrentId; PlayingTitle.Text = track?.Title ?? "Nothing playing"; PlayingArtist.Text = track?.ArtistLabel ?? "Choose something from your folders"; PlayingArt.Source = Image(track?.Artwork, 112); }
+            if (playingId != state.CurrentId || queueRevision != state.Revision) { playingId = state.CurrentId; PlayingTitle.Text = track?.Title ?? "Nothing playing"; PlayingArtist.Text = track?.ArtistLabel ?? "Choose something from your folders"; PlayingArt.Source = Image(track?.Artwork, 112); }
             updatingSeek = true; SeekSlider.Maximum = Math.Max(1, track?.Duration ?? 1); if (pendingSeek is null) SeekSlider.Value = Math.Clamp(state.Position, 0, SeekSlider.Maximum); SeekSlider.IsEnabled = track?.Duration > 0; updatingSeek = false;
             PositionText.Text = Track.FormatTime(state.Position); DurationText.Text = track?.Time ?? "0:00"; PlayIcon.Glyph = state.Playing ? "\uE769" : "\uE768";
             if (queueRevision != state.Revision)

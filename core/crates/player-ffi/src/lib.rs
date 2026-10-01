@@ -1,12 +1,12 @@
 //! Typed C ABI. All returned memory belongs to a snapshot, released exactly once.
 use player_audio::{Audio, Command};
 use player_domain::{Folder, Playlist, Track};
-use player_library::Library;
+use player_library::{Library, Monitor};
 use std::{
     ffi::{CStr, CString, c_char},
     path::PathBuf,
     sync::{
-        Mutex,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -15,7 +15,8 @@ pub struct Core {
     library: Mutex<Library>,
     path: PathBuf,
     audio: Audio,
-    scanning: AtomicBool,
+    scanning: Arc<AtomicBool>,
+    monitor: Monitor,
 }
 #[repr(C)]
 pub struct FolderDto {
@@ -196,11 +197,14 @@ pub unsafe extern "C" fn spiewak_open(path: *const c_char) -> *mut Core {
             std::fs::create_dir_all(parent).ok()?
         }
         let library = Library::open(&path).ok()?;
+        let scanning = Arc::new(AtomicBool::new(false));
+        let monitor = Monitor::start(path.clone(), scanning.clone()).ok()?;
         Some(Box::into_raw(Box::new(Core {
             library: Mutex::new(library),
             path,
             audio: Audio::new(),
-            scanning: AtomicBool::new(false),
+            scanning,
+            monitor,
         })))
     })
     .ok()
@@ -326,15 +330,7 @@ fn scan(c: &Core, path: Option<PathBuf>) -> Result<Snapshot, String> {
         lib.reconcile()?
     };
     let mut s = Snapshot::default();
-    s.message = s.string(&format!(
-        "{} tracks indexed{}",
-        report.tracks,
-        if report.warnings.is_empty() {
-            String::new()
-        } else {
-            format!(" · {}", report.warnings.join("; "))
-        }
-    ));
+    s.message = s.string(&c.monitor.scanned(&report));
     Ok(s)
 }
 /// # Safety
@@ -552,6 +548,54 @@ pub unsafe extern "C" fn spiewak_play_playlist(
         Ok(Snapshot::default())
     })
 }
+/// # Safety
+/// `ptr` must be a live core. Returns notification revision, status and ready flag.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_library_state(ptr: *mut Core) -> *mut Snapshot {
+    guard(|| {
+        let c = unsafe { core(ptr)? };
+        let state = c.monitor.state();
+        let mut s = Snapshot {
+            revision: state.revision,
+            flags: u32::from(state.ready),
+            ..Default::default()
+        };
+        s.message = s.string(&state.message);
+        Ok(s)
+    })
+}
+/// # Safety
+/// `ptr` must be live. An absent folder returns an empty collection.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_folder(ptr: *mut Core, id: i64) -> *mut Snapshot {
+    guard(|| {
+        let c = unsafe { core(ptr)? };
+        let folder = c.library.lock().map_err(|e| e.to_string())?.folder(id)?;
+        Ok(Snapshot::default().folders(folder.into_iter().collect()))
+    })
+}
+/// # Safety
+/// `ptr` must be live. Refresh queue metadata and paths without reloading the audio source.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_refresh_queue(ptr: *mut Core) -> *mut Snapshot {
+    guard(|| {
+        let c = unsafe { core(ptr)? };
+        let queue = c.audio.queue()?;
+        let lib = c.library.lock().map_err(|e| e.to_string())?;
+        let rows = queue
+            .iter()
+            .map(|t| {
+                lib.selected_tracks(&[t.id])
+                    .ok()
+                    .and_then(|r| r.into_iter().next())
+                    .unwrap_or_else(|| t.clone())
+            })
+            .collect();
+        c.audio.command(Command::Refresh(rows))?;
+        Ok(Snapshot::default())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
