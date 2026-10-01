@@ -86,26 +86,7 @@ public partial class MainWindow
                 finally { deferral.Complete(); }
             };
             await dialog.ShowAsync(); if (closed || proposal is null) return;
-            var before = proposal[0]; var after = proposal[1];
-            var preview = new StackPanel { Spacing = 12, Width = 480 };
-            preview.Children.Add(new TextBlock { Text = "Review the changes. This file stays in its folder. If it is playing, applying will leave it paused at the saved position.", TextWrapping = TextWrapping.Wrap });
-            foreach (var value in after.Values)
-            {
-                var old = before.Values.Single(v => v.Field == value.Field).Value;
-                if (old == value.Value && !changes.Any(v => v.Field == MetadataField.Artwork && value.Field == MetadataField.Artwork)) continue;
-                var display = value.Field == MetadataField.Artwork ? (artwork.Text.Length > 0 ? System.IO.Path.GetFileName(artwork.Text) + " (front cover)" : "Remove front cover") : value.Value;
-                preview.Children.Add(new TextBlock { Text = $"{FieldLabel(value.Field)}\n{(old.Length > 0 ? old : "(empty)")} → {(display.Length > 0 ? display : "(empty)")}", TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true });
-            }
-            var applyError = new InfoBar { Severity = InfoBarSeverity.Error, IsClosable = true }; preview.Children.Add(applyError);
-            var confirm = new ContentDialog { XamlRoot = Shell.XamlRoot, RequestedTheme = Shell.ActualTheme, Title = "Apply to this file?", PrimaryButtonText = "Apply changes", CloseButtonText = "Cancel", Content = new ScrollViewer { Content = preview, MaxHeight = 520 } };
-            confirm.PrimaryButtonClick += async (_, click) =>
-            {
-                var deferral = click.GetDeferral();
-                try { await Task.Run(() => core.ApplyMetadata(preparedId)); preparedId = 0; }
-                catch (Exception e) { click.Cancel = true; applyError.Message = e.Message; applyError.IsOpen = true; }
-                finally { deferral.Complete(); }
-            };
-            await confirm.ShowAsync(); if (!closed) await RefreshLibraryView();
+            if (await PreviewMetadata(proposal, artwork.Text.Length > 0 ? System.IO.Path.GetFileName(artwork.Text) + " (front cover)" : removeCover.IsChecked == true ? "Remove front cover" : "")) preparedId = 0;
         }
         catch (Exception e) { Error(e); }
         finally
@@ -117,6 +98,33 @@ public partial class MainWindow
             }
             metadataDialogOpen = false;
         }
+    }
+    private async Task<bool> PreviewMetadata(IReadOnlyList<MetadataRecord> proposal, string artworkLabel = "", string artworkPath = "")
+    {
+        bool applied = false;
+        var before = proposal[0]; var after = proposal[1];
+        var preview = new StackPanel { Spacing = 12, Width = 480 };
+        preview.Children.Add(new TextBlock { Text = "Review the changes. This file stays in its folder. If it is playing, applying will leave it paused at the saved position.", TextWrapping = TextWrapping.Wrap });
+        if (after.Message.Length > 0) preview.Children.Add(new TextBlock { Text = after.Message, TextWrapping = TextWrapping.Wrap, FontSize = 12 });
+        foreach (var value in after.Values)
+        {
+            var old = before.Values.Single(v => v.Field == value.Field).Value;
+            if (old == value.Value && !(artworkLabel.Length > 0 && value.Field == MetadataField.Artwork)) continue;
+            var display = value.Field == MetadataField.Artwork && artworkLabel.Length > 0 ? artworkLabel : value.Value;
+            preview.Children.Add(new TextBlock { Text = $"{FieldLabel(value.Field)}\n{(old.Length > 0 ? old : "(empty)")} → {(display.Length > 0 ? display : "(empty)")}", TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true });
+        }
+        if (artworkPath.Length > 0) preview.Children.Add(new Microsoft.UI.Xaml.Controls.Image { Source = Image(artworkPath, 192), Width = 192, Height = 192, HorizontalAlignment = HorizontalAlignment.Left });
+        var applyError = new InfoBar { Severity = InfoBarSeverity.Error, IsClosable = true }; preview.Children.Add(applyError);
+        var confirm = new ContentDialog { XamlRoot = Shell.XamlRoot, RequestedTheme = Shell.ActualTheme, Title = "Apply to this file?", PrimaryButtonText = "Apply changes", CloseButtonText = "Cancel", Content = new ScrollViewer { Content = preview, MaxHeight = 520 } };
+        confirm.PrimaryButtonClick += async (_, click) =>
+        {
+            var deferral = click.GetDeferral();
+            try { await Task.Run(() => core!.ApplyMetadata(after.OperationId)); applied = true; }
+            catch (Exception e) { click.Cancel = true; applyError.Message = e.Message; applyError.IsOpen = true; }
+            finally { deferral.Complete(); }
+        };
+        await confirm.ShowAsync(); if (!closed) await RefreshLibraryView();
+        return applied;
     }
     private async void ShowMetadataHistory(object sender, RoutedEventArgs args)
     {

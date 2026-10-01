@@ -9,7 +9,9 @@ mod identity;
 mod listening;
 mod metadata;
 mod monitor;
+mod providers;
 pub use metadata::{MetadataField, MetadataRecord, MetadataValue, OperationState};
+pub use providers::{Candidate, Discovery, DiscoveryProposal};
 mod playlist_files;
 mod playlists;
 mod presentation;
@@ -118,7 +120,7 @@ impl Library {
         let schema_version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if schema_version > 11 {
+        if schema_version > 12 {
             return Err("This library cache belongs to a newer version of Spiewak. Update the app before opening it.".into());
         }
         db.busy_timeout(std::time::Duration::from_secs(10))
@@ -209,6 +211,9 @@ impl Library {
         }
         if schema_version < 11 {
             metadata::migrate(&db)?;
+        }
+        if schema_version < 12 {
+            providers::migrate(&db)?;
         }
         Ok(Self {
             db,

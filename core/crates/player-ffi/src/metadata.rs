@@ -67,7 +67,9 @@ impl MetadataSnapshot {
         self
     }
 }
-fn result(action: impl FnOnce() -> Result<Vec<MetadataRecord>, String>) -> *mut MetadataSnapshot {
+pub(super) fn result(
+    action: impl FnOnce() -> Result<Vec<MetadataRecord>, String>,
+) -> *mut MetadataSnapshot {
     let mut snapshot = MetadataSnapshot::default();
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(action)) {
         Ok(Ok(rows)) => snapshot = snapshot.records(rows),
@@ -78,7 +80,7 @@ fn result(action: impl FnOnce() -> Result<Vec<MetadataRecord>, String>) -> *mut 
     }
     Box::into_raw(Box::new(snapshot))
 }
-fn library(
+pub(super) fn library(
     c: &Core,
     action: impl FnOnce(&Library) -> Result<Vec<MetadataRecord>, String>,
 ) -> Result<Vec<MetadataRecord>, String> {

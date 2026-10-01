@@ -27,6 +27,11 @@ var before = SHA256.HashData(File.ReadAllBytes(one));
 var db = Path.Combine(sandbox, "cache", "library.db");
 try
 {
+    if (args.Contains("--discovery-only"))
+    {
+        await DiscoveryChecks(sandbox, args.Contains("--providers"), args.Contains("--audio"));
+        Console.WriteLine("PASS: targeted native metadata discovery checks"); return;
+    }
     long folderId, trackId, playlistId;
     using (var core = new Core(db))
     {
@@ -159,6 +164,7 @@ try
     var artworkFfmpeg = Array.IndexOf(args, "--ffmpeg");
     await ArtworkChecks(sandbox, args.Contains("--audio"), artworkFfmpeg >= 0 ? args[artworkFfmpeg + 1] : null);
     await MetadataChecks(sandbox, args.Contains("--audio"), artworkFfmpeg >= 0 ? args[artworkFfmpeg + 1] : null);
+    await DiscoveryChecks(sandbox, args.Contains("--providers"), args.Contains("--audio"));
     Console.WriteLine("PASS: native Rust ↔ C# vertical slice" + (args.Contains("--audio") ? " including Windows audio" : " (audio skipped)"));
 }
 finally { Directory.Delete(sandbox, true); }
@@ -543,4 +549,49 @@ static byte[] DecodedHash(string ffmpeg, string path)
     using var pcm = new MemoryStream(); process.StandardOutput.BaseStream.CopyTo(pcm); process.WaitForExit();
     if (process.ExitCode != 0) throw new Exception("PCM fixture decode failed: " + error.GetAwaiter().GetResult());
     return SHA256.HashData(pcm.ToArray());
+}
+
+static async Task DiscoveryChecks(string sandbox, bool online, bool audio)
+{
+    var root = Path.Combine(sandbox, "Discovery"); Directory.CreateDirectory(root);
+    var path = Path.Combine(root, "Haddaway - What Is Love.wav"); Wave(path, 220);
+    var original = File.ReadAllBytes(path); var db = Path.Combine(sandbox, "discovery.db");
+    using (var core = new Core(db))
+    {
+        core.AddRoot(root); var folder = core.Folders().Folders.Single(); var track = core.Tracks(folder.Id).Tracks.Single();
+        var cached = core.Discovery(track.Id); Assert(!cached.Enabled && cached.Candidates.Count == 0 && cached.Artist == "Spiewak Sessions", "ABI 9 discovery reads local terms and starts offline");
+        bool disabled = false; try { core.DiscoverMetadata(track.Id, "What Is Love", "Haddaway"); } catch (InvalidOperationException e) { disabled = e.Message.Contains("disabled"); }
+        Assert(disabled && File.ReadAllBytes(path).SequenceEqual(original), "Disabled lookup makes no network request or file write");
+        core.SetDiscoveryEnabled(true); Assert(core.Discovery().Enabled, "Online setting crosses typed ABI 9");
+        core.SetDiscoveryEnabled(false);
+        if (online)
+        {
+            // A generated test tone exercises transport and review; the text lookup does not identify its audio.
+            core.SetDiscoveryEnabled(true);
+            if (audio) { core.Play(folder.Id, track.Id); core.Command(8); core.Command(8); await Wait(() => core.Now().Playing && core.Now().Position > .1, "Audio started before public provider lookup"); }
+            var query = Task.Run(() => core.DiscoverMetadata(track.Id, "What Is Love", "Haddaway"));
+            int polls = 0;
+            while (!query.IsCompleted)
+            {
+                if (audio) { var started = DateTime.UtcNow; var now = core.Now(); Assert(now.Playing && (DateTime.UtcNow-started).TotalSeconds < 1, "Provider request leaves WASAPI commands responsive"); }
+                polls++; await Task.Delay(400);
+            }
+            var found = await query;
+            Assert(found.Candidates.Count > 0 && found.Candidates.All(c => c.Evidence.Contains("not identity confidence")), "Live MusicBrainz response supplies reviewed candidates through ABI 9");
+            Assert(File.ReadAllBytes(path).SequenceEqual(original), "Live discovery is read-only");
+            var candidate = found.Candidates.First(c => c.VersionCompatible && c.Release.Length > 0);
+            var prepared = await Task.Run(() => core.PrepareDiscovery(candidate.Id, true, true)); var op = prepared.Last().OperationId;
+            Assert(File.ReadAllBytes(path).SequenceEqual(original) && prepared.Last().Message.Contains(candidate.Recording), "Live release and optional cover produce a reversible preview with durable provenance");
+            var artwork = core.Discovery(track.Id).Candidates.Single(c => c.Id == candidate.Id).Artwork;
+            if (artwork.Length > 0) Assert(File.Exists(artwork) && PngSize(artwork).Item1 <= 512, "Live Cover Art Archive redirect/TLS produces a bounded cached PNG preview");
+            Console.WriteLine("Provider preview: " + prepared.Last().Message);
+            core.ApplyMetadata(op); Assert(core.MetadataOperations().Single(r => r.OperationId == op).Message.Contains(candidate.Recording), "Applied provider operation retains provenance");
+            Assert(core.Folder(folder.Id).Folders.Single().Kind == FolderKind.LooseTracks && File.Exists(path), "Online album tags do not create a prominent singleton album or move its folder");
+            core.UndoMetadata(op); Assert(File.ReadAllBytes(path).SequenceEqual(original), "Undo after live provider metadata restores exact original bytes");
+            core.Command(2); core.SetDiscoveryEnabled(false);
+            var cachedCount = core.Discovery(track.Id).Candidates.Count;
+            Assert(core.DiscoverMetadata(track.Id, "What Is Love", "Haddaway").Candidates.Count == cachedCount, "Cached public search remains available after disabling network");
+        }
+    }
+    using (var core = new Core(db)) Assert(!core.Discovery().Enabled, "Discovery opt-in setting persists across restart");
 }

@@ -12,12 +12,13 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 - Persistent transport, upcoming queue sidebar, path/album inspector, compact rows, hideable queue, Back, Enter/Space/Alt+Left, basic context menu.
 - Local UTF-8 M3U8 import/export and file/folder/playlist drops to queue; external file references do not create synthetic folders or scan neighboring music.
 - Manual metadata/filename/front-cover proposals, explicit preview/apply/cancel, durable originals, file change history, verified Undo and explicit interrupted-write recovery. See METADATA.md.
+- Reviewed MusicBrainz recording/release search, automatic Cover Art Archive front-cover download for a selected candidate, preserved local tags/artwork and provider provenance through the existing preview/Apply/Undo path. See DISCOVERY.md.
 - Favorites, first-indexed/recently-added view and successful-playback-start history; persistent app state and unavailable snapshots.
 - Cached startup before background reconciliation; rescan external additions/renames/deletions without changing music.
 
 ## Verification
 
-- Rust: forty-six unit/integration tests; fmt and clippy with warnings denied.
+- Rust: fifty-four unit/integration tests; fmt and clippy with warnings denied.
 - Release WinUI build on ARM64; native shell visually inspected in actual VM screenshots.
 - C# ↔ Rust smoke: Unicode paths, actual WAV metadata/tags, folder fidelity, IDs across rescan/restart, external rename/delete, SHA-256 music preservation.
 - Codec integration: generated MP3, FLAC, AAC/M4A, ALAC, Ogg Vorbis and WAV fixtures all index, decode/play and seek successfully on Windows ARM64. Corrupt audio returns an error while previous audio/queue continue. FFmpeg 9.0.2 installed via winget for fixture generation only.
@@ -28,7 +29,7 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 
 - No Opus decoder in pinned Rodio/Symphonia graph. Files are indexed but playback reports an error.
 - Native watcher and stable IDs within one root/volume are implemented. Reconciliation still walks roots in batches; per-event incremental updates, cross-root/cross-volume identity and network performance are open. Conservative folder presentation is implemented; a derived album/artist catalog remains open.
-- Embedded/folder artwork cache and explicit manual metadata/filename/front-cover editing with Undo are implemented. Smart Inbox/provider discovery/downloads/automatic application remain open. Indexing never writes music; only explicit preview/apply/undo/recovery APIs can mutate a selected file.
+- Embedded/folder artwork cache and explicit manual metadata/filename/front-cover editing with Undo are implemented. MusicBrainz/CAA reviewed discovery/downloads are implemented. Fingerprint recognition, configured Inbox and automatic application remain open. Indexing never writes music; only explicit preview/apply/undo/recovery APIs can mutate a selected file.
 - No gapless guarantee, ReplayGain, output-device selector or global media keys. Mute is implemented.
 - Mixed queues, selection append/play-next, upcoming edits/clear, queue jump, shuffle upcoming, repeat off/queue/track and mute are implemented. Restart restores queue occurrences, cursor/position, volume and repeat/mute paused.
 - Tree expansion/layout/density are not persisted; no resizable left panel. Forward navigation is implemented.
@@ -144,3 +145,7 @@ Schema 11 and separately owned ABI 8 metadata DTOs implement current fields, saf
 Forty-six Rust tests, fmt, clippy with warnings denied, release DLL, WinUI ARM64 build and native C# checks pass. The six generated codecs retain identical decoded PCM after tag writes and byte-exact Undo. WASAPI checks verify editing current playback leaves it paused at the retained position, explicit resume uses the edited path, and editing an upcoming track keeps unrelated playback. Current feature CI is not claimed. The new shell starts and visibly includes File change history. A Computer Use click on that button produced hover only, with no verified dialog; actual metadata context-menu/picker/dialog/history gestures, accessibility and larger files remain unverified. Automatic providers/Inbox/downloads remain unfinished R12 work.
 
 Reproduction logs on the VM: `C:\Users\pawel\spiewak-metadata-full-build.log`, `spiewak-metadata-tests.log`, `spiewak-metadata-clippy.log`, `spiewak-metadata-build.log`, `spiewak-metadata-smoke-audio.log`.
+
+## Metadata discovery milestone
+
+Schema 12 / ABI 9 adds opt-in MusicBrainz recording/edition search and bounded Cover Art Archive downloads, with Needs Review evidence, local tag/artwork precedence, original-version/annotation preservation, stale-file checks and durable provenance. Fifty-four Rust tests plus native C# public-provider/TLS/PNG/Apply/Undo and WASAPI responsiveness checks pass; generated six-codec regression remains green. WinUI discovery/review is connected and builds. Actual dialog gestures remain open; fingerprint recognition, Inbox and automatic application are not implemented. See DISCOVERY.md.

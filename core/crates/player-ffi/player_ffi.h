@@ -72,6 +72,14 @@ SpiewakMetadataSnapshot *spiewak_metadata_prepare(SpiewakCore *, int64_t track, 
 /* action: 1 apply, 2 undo, 3 cancel, 4 explicit original recovery. The edited selected track stays paused. */
 SpiewakMetadataSnapshot *spiewak_metadata_command(SpiewakCore *, int64_t operation, uint32_t action);
 void spiewak_metadata_free(SpiewakMetadataSnapshot *);
+/* Online lookup defaults off. Artist/title searches are sent only after enabling it.
+   Header and candidate strings belong to the returned snapshot. Flags: title 1, artist 2, duration 4, version 8.
+   Search rank is NOT identity confidence; every candidate needs review. */
+typedef struct { int64_t id,track_id; uint32_t flags,score; double duration; const char *title,*artist,*album,*date,*edition,*evidence,*source,*artwork,*recording,*release; } SpiewakCandidate;
+typedef struct { const char *error,*message; uint32_t enabled; const SpiewakCandidate *rows; size_t count; const char *title,*artist; } SpiewakDiscovery;
+SpiewakDiscovery *spiewak_discovery(SpiewakCore *, int64_t track, uint32_t action, const char *title, const char *artist);
+SpiewakMetadataSnapshot *spiewak_discovery_prepare(SpiewakCore *, int64_t candidate, uint32_t replace_tags, uint32_t replace_cover);
+void spiewak_discovery_free(SpiewakDiscovery *);
 #ifdef __cplusplus
 }
 #endif

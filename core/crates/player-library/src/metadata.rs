@@ -443,7 +443,7 @@ impl Library {
         Ok(())
     }
     fn operation(&self, id: i64) -> Result<Operation> {
-        self.db.query_row("SELECT id,track_id,state,created,original_path,target_path,message,before_hash,after_hash,identity FROM file_operations WHERE id=?",[id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,u32>(2)?,r.get::<_,i64>(3)?,r.get::<_,String>(4)?,r.get::<_,String>(5)?,r.get::<_,String>(6)?,r.get::<_,String>(7)?,r.get::<_,String>(8)?,r.get::<_,String>(9)?))).map_err(|e|e.to_string()).and_then(|(id,track,state,created,original_path,target_path,message,before_hash,after_hash,identity)|Ok(Operation{record:MetadataRecord{operation_id:id,track_id:track,state:OperationState::from_value(state)?,created,original_path,target_path,message,values:Vec::new()},before_hash,after_hash,identity}))
+        self.db.query_row("SELECT id,track_id,state,created,original_path,target_path,CASE WHEN provenance='' THEN message ELSE provenance || ' ' || message END,before_hash,after_hash,identity FROM file_operations WHERE id=?",[id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,u32>(2)?,r.get::<_,i64>(3)?,r.get::<_,String>(4)?,r.get::<_,String>(5)?,r.get::<_,String>(6)?,r.get::<_,String>(7)?,r.get::<_,String>(8)?,r.get::<_,String>(9)?))).map_err(|e|e.to_string()).and_then(|(id,track,state,created,original_path,target_path,message,before_hash,after_hash,identity)|Ok(Operation{record:MetadataRecord{operation_id:id,track_id:track,state:OperationState::from_value(state)?,created,original_path,target_path,message,values:Vec::new()},before_hash,after_hash,identity}))
     }
     fn stage_paths(&self, id: i64, source: &Path) -> (PathBuf, PathBuf) {
         let ext = source.extension().unwrap_or_default().to_string_lossy();
@@ -483,6 +483,23 @@ impl Library {
         &self,
         track: i64,
         changes: &[MetadataValue],
+    ) -> Result<Vec<MetadataRecord>> {
+        self.prepare_metadata_origin(track, changes, None)
+    }
+    pub(super) fn metadata_origin(&self, track: i64) -> Result<(String, String)> {
+        let t = self.selected_tracks(&[track])?.remove(0);
+        let path = Path::new(&t.path);
+        let mut source = lock(path, false)?;
+        Ok((
+            digest(&mut source)?,
+            identity::file_identity(path).ok_or("File identity is unavailable.")?,
+        ))
+    }
+    pub(super) fn prepare_metadata_origin(
+        &self,
+        track: i64,
+        changes: &[MetadataValue],
+        origin: Option<(&str, &str, &str)>,
     ) -> Result<Vec<MetadataRecord>> {
         if changes.is_empty() || changes.len() > 18 {
             return Err("Choose at least one metadata or filename change.".into());
@@ -556,6 +573,14 @@ impl Library {
                 .saturating_add(8 * 1024 * 1024 + 18 * 16384),
         )?;
         let before_hash = digest(&mut source)?;
+        if let Some((hash, id, _)) = origin
+            && (hash != before_hash || id != identity)
+        {
+            return Err(
+                "The file changed after discovery. Search again; the original was not written."
+                    .into(),
+            );
+        }
         self.db.execute("INSERT INTO file_operations(track_id,state,original_path,target_path,identity,before_hash) VALUES(?,?,?,?,?,?)",params![track,OperationState::Cancelled as u32,t.path,display_path(&target),identity,before_hash]).map_err(|e|e.to_string())?;
         let id = self.db.last_insert_rowid();
         let (backup, prepared) = self.stage_paths(id, &original);
@@ -588,11 +613,12 @@ impl Library {
             }
             self.db
                 .execute(
-                    "UPDATE file_operations SET state=?,after_hash=?,message=? WHERE id=?",
+                    "UPDATE file_operations SET state=?,after_hash=?,message=?,provenance=? WHERE id=?",
                     params![
                         OperationState::Prepared as u32,
                         after_hash,
                         cache.warnings.join(" "),
+                        origin.map(|(_, _, provenance)| provenance).unwrap_or(""),
                         id
                     ],
                 )
@@ -967,7 +993,7 @@ impl Library {
         Ok(result)
     }
 }
-fn clean_download_name(name: &str) -> String {
+pub(super) fn clean_download_name(name: &str) -> String {
     let mut value = name.trim().to_owned();
     loop {
         let before = value.clone();
@@ -1000,6 +1026,7 @@ fn clean_download_name(name: &str) -> String {
 
 #[cfg(test)]
 pub(super) fn drop_migration(db: &Connection) {
+    super::providers::drop_migration(db);
     db.execute_batch("DROP TABLE file_operations;").unwrap();
 }
 

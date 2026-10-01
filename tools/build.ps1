@@ -9,6 +9,11 @@ $targetArch=if($Architecture -eq 'ARM64'){'arm64'}else{'amd64'}
 cmd /c "`"$vs\Common7\Tools\VsDevCmd.bat`" -arch=$targetArch -host_arch=$hostArch >nul && set" | ForEach-Object {
  if($_ -match '^([^=]+)=(.*)$'){[Environment]::SetEnvironmentVariable($matches[1],$matches[2],'Process')}
 }
+$llvm=Join-Path $env:ProgramFiles 'LLVM\bin'
+if($Architecture -eq 'ARM64'){
+ if(!(Test-Path (Join-Path $llvm 'clang.exe'))){throw 'Install LLVM.LLVM with winget: the ARM64 TLS dependency requires clang.'}
+ $env:PATH="$llvm;$env:PATH"
+}
 $env:PATH="$env:USERPROFILE\.cargo\bin;$env:PATH"
 Push-Location "$root\core"
 try {

@@ -43,7 +43,7 @@ impl Cache {
     }
     pub fn prune(&mut self, db: &rusqlite::Connection) -> Result<()> {
         // Retain all library and saved-session references; only old generated orphans are disposable.
-        let mut stmt=db.prepare("SELECT embedded_art FROM tracks UNION SELECT artwork FROM folders UNION SELECT artwork FROM session_items UNION SELECT artwork FROM favorites UNION SELECT artwork FROM listening_history").map_err(|e|e.to_string())?;
+        let mut stmt=db.prepare("SELECT embedded_art FROM tracks UNION SELECT artwork FROM folders UNION SELECT artwork FROM session_items UNION SELECT artwork FROM favorites UNION SELECT artwork FROM listening_history UNION SELECT artwork FROM metadata_candidates").map_err(|e|e.to_string())?;
         let keep = stmt
             .query_map([], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?
