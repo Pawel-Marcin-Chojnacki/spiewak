@@ -1,6 +1,8 @@
 //! Filesystem identities and playback queue rules, independent of UI and storage.
 mod presentation;
+mod session;
 pub use presentation::{FolderEvidence, FolderKind};
+pub use session::Session;
 #[derive(Clone, Debug, Default)]
 pub struct Track {
     pub id: i64,
@@ -43,6 +45,13 @@ impl Queue {
         self.tracks = tracks.into();
         self.current = Some(start);
         self.next_end = None;
+        Ok(())
+    }
+    pub fn restore(&mut self, session: &Session) -> Result<(), String> {
+        session.validate()?;
+        self.tracks = session.tracks.clone();
+        self.current = session.current;
+        self.next_end = session.next_end;
         Ok(())
     }
     /// Manual Next ignores repeat-one; automatic completion honors it.

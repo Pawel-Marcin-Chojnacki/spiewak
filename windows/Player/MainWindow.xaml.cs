@@ -17,7 +17,7 @@ public partial class MainWindow : Window
     private readonly Stack<Folder?> history = new();
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private Folder? currentFolder;
-    private bool polling, updatingSeek, closed, scanning;
+    private bool polling, updatingSeek, updatingVolume, closed, scanning;
     private ulong queueRevision = ulong.MaxValue;
     private string shownAudioError = "";
     private long playingId;
@@ -54,6 +54,8 @@ public partial class MainWindow : Window
                 await Task.Run(() => core.AddRoot(sample));
                 Title = "Śpiewak — Demo collection";
             }
+            var restored = await Task.Run(() => core.Now());
+            updatingVolume = true; VolumeSlider.Value = restored.Volume * 100; updatingVolume = false;
             await ReloadTree(); await ReloadPlaylists(); timer.Start();
             var roots = await Task.Run(() => core.Folders());
             if (roots.Folders.Count > 0) await Browse(roots.Folders[0], false);
@@ -214,7 +216,7 @@ public partial class MainWindow : Window
     private void SeekChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs args)
     { if (!updatingSeek && core is not null) { pendingSeek = args.NewValue; seekTimer.Stop(); seekTimer.Start(); } }
     private async void VolumeChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs args)
-    { if (core is not null) await Command(6, args.NewValue / 100); }
+    { if (!updatingVolume && core is not null) await Command(6, args.NewValue / 100); }
     private static BitmapImage? Image(string? path, int size)
     { if (string.IsNullOrWhiteSpace(path)) return null; try { return new BitmapImage(new Uri(path)) { DecodePixelWidth = size }; } catch { return null; } }
     private void QueueVisibilityChanged(object sender, RoutedEventArgs args)

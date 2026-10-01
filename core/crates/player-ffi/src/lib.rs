@@ -3,12 +3,14 @@ use player_audio::{Audio, Command};
 use player_domain::{Folder, Playlist, Track};
 use player_library::{Library, Monitor};
 use std::{
+    cell::RefCell,
     ffi::{CStr, CString, c_char},
     path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 pub struct Core {
@@ -17,6 +19,42 @@ pub struct Core {
     audio: Audio,
     scanning: Arc<AtomicBool>,
     monitor: Monitor,
+    checkpoint: Mutex<Checkpoint>,
+}
+struct Checkpoint {
+    tracks: Arc<[Track]>,
+    written: Instant,
+}
+impl Core {
+    fn checkpoint(&self, force: bool) -> Result<(), String> {
+        let mut saved = self
+            .checkpoint
+            .lock()
+            .map_err(|_| "Session lock unavailable.")?;
+        let session = self.audio.session()?;
+        let changed = !Arc::ptr_eq(&saved.tracks, &session.tracks);
+        if !force && !changed && saved.written.elapsed() < Duration::from_secs(5) {
+            return Ok(());
+        }
+        self.library.lock().map_err(|_| "Library unavailable.")?
+            .save_session(&session, changed)
+            .map_err(|e| format!("Cannot save the playback session: {e}. Playback can continue; keep the database for recovery."))?;
+        saved.tracks = session.tracks;
+        saved.written = Instant::now();
+        Ok(())
+    }
+    fn command(&self, command: Command) -> Result<(), String> {
+        self.audio.command(command)?;
+        self.checkpoint(true)
+    }
+}
+thread_local! {
+    static OPEN_ERROR: RefCell<CString> = RefCell::new(CString::default());
+}
+/// Startup diagnostic on this thread, valid until its next open call. Caller does not free it.
+#[unsafe(no_mangle)]
+pub extern "C" fn spiewak_last_open_error() -> *const c_char {
+    OPEN_ERROR.with(|e| e.borrow().as_ptr())
 }
 #[repr(C)]
 pub struct FolderDto {
@@ -197,25 +235,41 @@ pub extern "C" fn spiewak_abi_version() -> u32 {
 /// `path` must point to a valid NUL-terminated UTF-8 database path during this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spiewak_open(path: *const c_char) -> *mut Core {
-    std::panic::catch_unwind(|| {
-        let path = PathBuf::from(unsafe { text(path) }.ok()?);
+    let result = std::panic::catch_unwind(|| -> Result<Core, String> {
+        let path = PathBuf::from(unsafe { text(path) }?);
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).ok()?
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let library = Library::open(&path).ok()?;
+        let library = Library::open(&path)?;
+        let session = library.load_session()?;
+        let tracks = session.tracks.clone();
+        let audio = Audio::restore(session)?;
         let scanning = Arc::new(AtomicBool::new(false));
-        let monitor = Monitor::start(path.clone(), scanning.clone()).ok()?;
-        Some(Box::into_raw(Box::new(Core {
+        let monitor = Monitor::start(path.clone(), scanning.clone())?;
+        Ok(Core {
             library: Mutex::new(library),
             path,
-            audio: Audio::new(),
+            audio,
             scanning,
             monitor,
-        })))
-    })
-    .ok()
-    .flatten()
-    .unwrap_or(std::ptr::null_mut())
+            checkpoint: Mutex::new(Checkpoint {
+                tracks,
+                written: Instant::now(),
+            }),
+        })
+    });
+    let (core, error) = match result {
+        Ok(Ok(c)) => (Box::into_raw(Box::new(c)), String::new()),
+        Ok(Err(e)) => (std::ptr::null_mut(), e),
+        Err(_) => (
+            std::ptr::null_mut(),
+            "The native core encountered an internal startup error.".into(),
+        ),
+    };
+    OPEN_ERROR.with(|cell| {
+        *cell.borrow_mut() = CString::new(error.replace('\0', "�")).expect("NULs removed")
+    });
+    core
 }
 /// # Safety
 /// `ptr` must be a live core returned by open, with no calls still using it. Close exactly once.
@@ -223,7 +277,9 @@ pub unsafe extern "C" fn spiewak_open(path: *const c_char) -> *mut Core {
 pub unsafe extern "C" fn spiewak_close(ptr: *mut Core) {
     if !ptr.is_null() {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            drop(unsafe { Box::from_raw(ptr) })
+            let c = unsafe { Box::from_raw(ptr) };
+            let _ = c.checkpoint(true);
+            drop(c)
         }));
     }
 }
@@ -314,7 +370,7 @@ pub unsafe extern "C" fn spiewak_play_view(
             .iter()
             .position(|t| t.id == track)
             .ok_or("This track is no longer in the folder.")?;
-        c.audio.command(Command::Replace(rows, index))?;
+        c.command(Command::Replace(rows, index))?;
         Ok(Snapshot::default())
     })
 }
@@ -371,7 +427,7 @@ pub unsafe extern "C" fn spiewak_play_folder(
             .lock()
             .map_err(|_| "Library unavailable.")?
             .folder_queue(folder, track)?;
-        c.audio.command(Command::Replace(tracks, index))?;
+        c.command(Command::Replace(tracks, index))?;
         Ok(Snapshot::default())
     })
 }
@@ -401,7 +457,7 @@ pub unsafe extern "C" fn spiewak_selection(
             2 => Command::Append(rows, true),
             _ => return Err("Unknown selection action.".into()),
         };
-        c.audio.command(command)?;
+        c.command(command)?;
         Ok(Snapshot::default())
     })
 }
@@ -443,7 +499,7 @@ pub unsafe extern "C" fn spiewak_audio_command(
             13 => Command::Clear,
             _ => return Err("Unknown audio command.".into()),
         };
-        unsafe { core(ptr) }?.audio.command(command)?;
+        unsafe { core(ptr) }?.command(command)?;
         Ok(Snapshot::default())
     })
 }
@@ -452,7 +508,9 @@ pub unsafe extern "C" fn spiewak_audio_command(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spiewak_now(ptr: *mut Core) -> *mut Snapshot {
     guard(|| {
-        let playback = unsafe { core(ptr) }?.audio.snapshot()?;
+        let c = unsafe { core(ptr) }?;
+        let checkpoint_error = c.checkpoint(false).err();
+        let playback = c.audio.snapshot()?;
         let mut s = Snapshot {
             position: playback.position,
             current_id: playback.track.as_ref().map(|t| t.id).unwrap_or(0),
@@ -463,7 +521,7 @@ pub unsafe extern "C" fn spiewak_now(ptr: *mut Core) -> *mut Snapshot {
             flags: playback.flags,
             ..Default::default()
         };
-        s.error = s.string(&playback.error);
+        s.error = s.string(checkpoint_error.as_deref().unwrap_or(&playback.error));
         Ok(s.tracks(playback.track.into_iter().collect()))
     })
 }
@@ -550,7 +608,7 @@ pub unsafe extern "C" fn spiewak_play_playlist(
             .lock()
             .map_err(|_| "Library unavailable.")?
             .playlist_tracks(id, 0, u32::MAX)?;
-        c.audio.command(Command::Replace(rows, index as usize))?;
+        c.command(Command::Replace(rows, index as usize))?;
         Ok(Snapshot::default())
     })
 }
@@ -597,7 +655,8 @@ pub unsafe extern "C" fn spiewak_refresh_queue(ptr: *mut Core) -> *mut Snapshot 
                     .unwrap_or_else(|| t.clone())
             })
             .collect();
-        c.audio.command(Command::Refresh(rows))?;
+        drop(lib);
+        c.command(Command::Refresh(rows))?;
         Ok(Snapshot::default())
     })
 }

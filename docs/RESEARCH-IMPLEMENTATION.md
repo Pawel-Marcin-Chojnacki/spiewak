@@ -11,7 +11,7 @@ Active objective: implement docs/research/music-players-2026-10-01.md at source 
 | R03 | Unicode search, selection, responsive results, no playback interruption | FTS/debounce/obsolete-result discard implemented. UI acceptance, responsiveness and larger datasets remain unmeasured. |
 | R04 | Persistent playlists, visible missing entries, rename/move references | Core/ABI checks pass for same-root/volume NTFS. M3U interoperability is R11. Broader supported filesystem limits must remain explicit. |
 | R05 | File synchronization, debounce, stable IDs | Native watcher plus periodic reconciliation implemented; IDs verified on NTFS, overflow covered. Fully incremental performance, large/network libraries and UI state preservation remain open. |
-| R06 | Restore queue/order/volume/position without surprising autoplay | Not implemented. Must persist duplicate occurrences and mixed sources, paused restoration and missing-file state; verify restart and crash checkpoint behavior. |
+| R06 | Restore queue/order/volume/position without surprising autoplay | Core implemented: schema 7, duplicate/mixed queue occurrences, FIFO boundary, settings/cursor/position, paused/lazy restart and unavailable snapshots. Twenty-one Rust tests and native Windows restart/WASAPI/abrupt-termination checks pass. Actual restored UI/input gate remains open. |
 | R07 | Favorites, recently added, history, one simple action | Not implemented. Store app state without rewriting tags or directories; verify rename/restart and navigation. |
 | R08 | ReplayGain track/album, verified gapless, opt-in crossfade | Volume/mute exist. Gain handling, source pipeline and measured continuous output are missing. Decode/output safety and album order need regression. |
 | R09 | Global media keys, output-device selection/loss | Not implemented. Verify outside the app and physical/default-device changes, with actionable errors. |
@@ -30,7 +30,7 @@ Active objective: implement docs/research/music-players-2026-10-01.md at source 
 1. Add real folder, find Polish-named track and play without configuring tags: ABI covered; native input workflow pending.
 2. Browse/search while playing without interruption: architecture separated; end-user workflow pending.
 3. A then B Play next, shuffle and duplicates: FIFO native and Windows audio checks pass; UI gates remain open.
-4. Save queue/restart/playlist, no autoplay: playlist restart covered; session restart not implemented.
+4. Save queue/restart/playlist, no autoplay: playlist and session restart plus abrupt termination covered natively; actual UI workflow remains open.
 5. Explorer rename album/file updates library/playlist; offline root preserved: native filesystem/ABI covered; UI refresh/scroll acceptance pending.
 6. Connected album tracks produce no unintended gap: missing source pipeline and measured evidence.
 7. Corrupt file/device loss/scan do not freeze UI: corrupt file preserves audio in ABI tests; device and UI load evidence missing.
@@ -39,4 +39,4 @@ Active objective: implement docs/research/music-players-2026-10-01.md at source 
 
 ## Continuation
 
-First close R02 queue semantics, then R06 session continuity and R10 artwork. Continue R07/R11/R12 and audio/device/performance/UX gates. This order is execution planning, not a change to final scope. Keep the goal active until each required feature and its acceptance evidence is complete. The Mac lock currently blocks native visual inspection, not independent core implementation.
+R02 queue semantics and R06 session continuity are implemented with native checks; their UI gates remain open. Next implement R10 artwork. Continue R07/R11/R12 and audio/device/performance/UX gates. This order is execution planning, not a change to final scope. Keep the goal active until each required feature and its acceptance evidence is complete. Latest shell inspection was possible, but Computer Use guest clicks/keys still did not yield verified state changes. Continue independent core implementation while keeping actual UI acceptance open.

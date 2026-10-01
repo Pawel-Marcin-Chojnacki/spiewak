@@ -5,7 +5,7 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 ## Implemented
 
 - Native WinUI 3 / .NET 10 process loading Rust through typed C ABI.
-- Add library roots; background read-only scanning; rebuildable SQLite WAL cache with schema version check.
+- Add library roots; background read-only scanning; SQLite WAL library index and persistent app state with schema version check.
 - Real folder hierarchy, lazy tree children, center subfolder navigation, paged/virtualized track list.
 - Lofty title/artist/album/album-artist/number/year/duration; filename fallback; cover.jpg/folder.jpg/front.jpg/PNG folder covers.
 - Streaming Rust audio on a dedicated worker; folder queue, play/pause/resume/stop/seek/next/previous/volume.
@@ -14,7 +14,7 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 
 ## Verification
 
-- Rust: sixteen unit/integration tests; fmt and clippy with warnings denied.
+- Rust: twenty-one unit/integration tests; fmt and clippy with warnings denied.
 - Release WinUI build on ARM64; native shell visually inspected in actual VM screenshots.
 - C# ↔ Rust smoke: Unicode paths, actual WAV metadata/tags, folder fidelity, IDs across rescan/restart, external rename/delete, SHA-256 music preservation.
 - Codec integration: generated MP3, FLAC, AAC/M4A, ALAC, Ogg Vorbis and WAV fixtures all index, decode/play and seek successfully on Windows ARM64. Corrupt audio returns an error while previous audio/queue continue. FFmpeg 9.0.2 installed via winget for fixture generation only.
@@ -27,7 +27,7 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 - Native watcher and stable IDs within one root/volume are implemented. Reconciliation still walks roots in batches; per-event incremental updates, cross-root/cross-volume identity and network performance are open. Conservative folder presentation is implemented; a derived album/artist catalog remains open.
 - No embedded-artwork extraction/cache, tag editing, Smart Inbox, provider integrations or Undo. All file mutation is absent/disabled.
 - No gapless guarantee, ReplayGain, output-device selector or global media keys. Mute is implemented.
-- Mixed queues, selection append/play-next, upcoming edits/clear, queue jump, shuffle upcoming, repeat off/queue/track and mute are implemented. Restart queue persistence remains open.
+- Mixed queues, selection append/play-next, upcoming edits/clear, queue jump, shuffle upcoming, repeat off/queue/track and mute are implemented. Restart restores queue occurrences, cursor/position, volume and repeat/mute paused.
 - Tree expansion/layout/density are not persisted; no resizable left panel. Forward navigation is implemented.
 - Native extended selection exists; batch Play/Play next/Add to queue are implemented; playlist actions are implemented; tag editing remains open. Full accessibility/high contrast/high-DPI/multi-monitor review and 1k/10k/100k benchmarks remain open.
 - Unpackaged self-contained developer build; proper installer/update/diagnostic export is later work.
@@ -46,7 +46,7 @@ The supplied plan is preserved verbatim in master-plan.md. Start the next featur
 
 ## UI test access
 
-Computer Use can inspect the actual Parallels screenshot and native macOS menus, but guest clicks/keys were not delivered in this session. Full picker/tree/double-click testing is pending authorization for PowerShell UI Automation as an alternative input method. No guest UI workflow is claimed verified solely from passing core tests.
+Computer Use can inspect the actual Parallels screenshot and native macOS menus, but guest clicks/keys were not delivered in this session. Full picker/tree/double-click testing remains open: Computer Use guest clicks and keyboard attempts have not produced a verifiable state change. No guest UI workflow is claimed verified solely from passing core tests.
 
 ## Player controls milestone
 
@@ -92,4 +92,14 @@ Fifteen Rust tests, fmt/clippy with warnings denied, WinUI Release ARM64 and C# 
 
 The complete research implementation is tracked in RESEARCH-IMPLEMENTATION.md. P0/P1/P2 decisions, household requirements, nine acceptance scenarios and UI/performance evidence remain in scope; existing narrow checks are not a completion claim.
 
-Queue semantics milestone: successive Play next requests form a FIFO prefix before the original upcoming suffix. Natural/manual advancement consumes that prefix, repeat-one retains it, removing an occurrence adjusts its boundary. Explicit queue jump/Previous/manual reorder/shuffle starts a new request context; Clear and replacement clear the prefix. Duplicate occurrences remain distinct. Double-click/Enter plays only that selected track; explicit folder/playlist/results buttons build their indicated full queues. Sixteen Rust tests and Windows C# ABI/audio checks pass, including FIFO requests while playing. WinUI Release builds; full UI input verification remains pending. Session persistence remains separate work.
+Queue semantics milestone: successive Play next requests form a FIFO prefix before the original upcoming suffix. Natural/manual advancement consumes that prefix, repeat-one retains it, removing an occurrence adjusts its boundary. Explicit queue jump/Previous/manual reorder/shuffle starts a new request context; Clear and replacement clear the prefix. Duplicate occurrences remain distinct. Double-click/Enter plays only that selected track; explicit folder/playlist/results buttons build their indicated full queues. Sixteen Rust tests and Windows C# ABI/audio checks pass, including FIFO requests while playing. WinUI Release builds; full UI input verification remains pending. Session persistence is implemented in the milestone below.
+
+## Playback session milestone
+
+Schema 7 atomically stores the ordered queue, duplicate occurrences, current occurrence, Play next FIFO boundary, seek position, volume, mute and repeat. Library joins resolve the latest metadata/path by stable ID; deletion retains a last-known snapshot and an unavailable label. Separate missing items keep separate paths during refresh. Restoration is paused and lazy: neither a music file nor an output device is opened until explicit playback. Play on an upcoming-only queue starts its first occurrence. Stop resets position. A missing next item stops visibly at that occurrence; it is not silently skipped or resolved to an unrelated replacement file.
+
+Rust publishes the complete audio state before acknowledging a command. Successful commands checkpoint app state; WinUI's background playback polling checkpoints elapsed position every five seconds, and normal close makes a final attempt. Queue rows are rewritten only when their Arc identity changes, not on every position update. Checkpoint failure is reported without cutting playback; startup reports the actual SQLite/session error. Keep the database for recovery: it contains playlists, presentation choices and session state, not just disposable metadata. Automatic recovery from a corrupt saved session and simultaneous multiple app instances remain open.
+
+Twenty-one Rust tests, fmt, clippy with warnings denied, WinUI Release ARM64 and C# native tests pass. Tests cover schema 6→7 preserving playlist state, rollback after a simulated mid-queue SQL failure, mixed sources/duplicates, paused settings/cursor restart, preserved FIFO prefix, renamed paths, distinct unavailable entries, real WASAPI resume at the saved position and termination of a child process followed by recovery of the periodic checkpoint. Timing is nominal while playback polling is active and storage is writable; this is not a guarantee against a storage failure or OS suspension.
+
+The latest demo app was launched in the Windows console session and visually inspected through Parallels. Compact folder presentation and the empty transport are visible. The Mac is currently accessible, but guest click and Ctrl+F/type attempts still produced no UI state change. Actual user input and restored transport/volume appearance remain unverified; core tests do not substitute for those gates.

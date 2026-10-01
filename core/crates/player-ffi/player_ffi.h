@@ -18,6 +18,8 @@ typedef struct SpiewakSnapshot {
 } SpiewakSnapshot;
 uint32_t spiewak_abi_version(void);
 SpiewakCore *spiewak_open(const char *database_path);
+/* Thread-local startup diagnostic; valid until next open on this thread. Do not free. */
+const char* spiewak_last_open_error(void);
 void spiewak_close(SpiewakCore *);
 void spiewak_snapshot_free(SpiewakSnapshot *);
 SpiewakSnapshot *spiewak_folders(SpiewakCore *, int64_t parent);

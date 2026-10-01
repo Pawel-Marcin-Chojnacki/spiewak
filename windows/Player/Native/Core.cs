@@ -37,6 +37,7 @@ internal static class NativeMethods
     private const string Dll = "spiewak_core";
     [DllImport(Dll, EntryPoint = "spiewak_abi_version", CallingConvention = CallingConvention.Cdecl)] internal static extern uint Version();
     [DllImport(Dll, EntryPoint = "spiewak_open", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Open([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+    [DllImport(Dll, EntryPoint = "spiewak_last_open_error", CallingConvention = CallingConvention.Cdecl)] internal static extern nint OpenError();
     [DllImport(Dll, EntryPoint = "spiewak_close", CallingConvention = CallingConvention.Cdecl)] internal static extern void Close(nint handle);
     [DllImport(Dll, EntryPoint = "spiewak_snapshot_free", CallingConvention = CallingConvention.Cdecl)] internal static extern void Free(nint snapshot);
     [DllImport(Dll, EntryPoint = "spiewak_folders", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Folders(CoreHandle core, long parent);
@@ -87,7 +88,7 @@ public sealed class Core : IDisposable
         if (NativeMethods.Version() != 4 || Marshal.SizeOf<FolderRow>() != 56 || Marshal.SizeOf<TrackRow>() != 80 || Marshal.SizeOf<Header>() != 112)
             throw new InvalidOperationException("The native core has an incompatible ABI. Rebuild the application.");
         handle = new CoreHandle(NativeMethods.Open(databasePath));
-        if (handle.IsInvalid) throw new IOException($"Cannot open the library cache at {databasePath}. Check folder permissions.");
+        if (handle.IsInvalid) throw new IOException($"Cannot open the library at {databasePath}: {Text(NativeMethods.OpenError())}");
     }
     private static string Text(nint pointer) => pointer == 0 ? "" : Marshal.PtrToStringUTF8(pointer) ?? "";
     private static Result Read(nint pointer)

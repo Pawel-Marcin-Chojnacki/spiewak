@@ -6,6 +6,18 @@ using System.Security.Cryptography;
 if (args.Length < 1) throw new ArgumentException("Usage: Core.Smoke <absolute Rust DLL path> [--audio]");
 var dll = Path.GetFullPath(args[0]);
 NativeLibrary.SetDllImportResolver(typeof(Core).Assembly, (name, _, _) => name == "spiewak_core" ? NativeLibrary.Load(dll) : 0);
+if (args.Length > 1 && args[1] == "--session-child")
+{
+    using var child = new Core(args[2]);
+    child.Play(long.Parse(args[3]), long.Parse(args[4])); child.Command(6, 0.19); child.Command(7);
+    child.Command(5, 0.5);
+    while (true)
+    {
+        var state = child.Now(); if (state.Error.Length > 0) throw new Exception(state.Error);
+        if (state.Position > 6) File.WriteAllText(args[5], "ready");
+        await Task.Delay(100);
+    }
+}
 var sandbox = Path.Combine(Path.GetTempPath(), "spiewak-smoke-" + Guid.NewGuid());
 Directory.CreateDirectory(sandbox);
 var music = Path.Combine(sandbox, "Muzyka Śpiewak"); var album = Path.Combine(music, "Sessions", "Field Notes"); Directory.CreateDirectory(album);
@@ -141,6 +153,7 @@ try
         await Wait(() => (core.LibraryState().Flags & 1) != 0, "Restored root automatically watched again");
     }
     using (var core = new Core(db)) { Assert(core.Folder(folderId).Folders.Single().Kind == FolderKind.UserCollection, "Folder presentation survives restart"); core.SetFolderKind(folderId, FolderKind.Auto); Assert(core.Folder(folderId).Folders.Single().Kind == FolderKind.LooseTracks, "One remaining tagged song stays a loose track in automatic mode"); Assert(core.Playlists().Playlists.Single().Count == 2, "Playlist survives restart"); core.Rescan(); Assert(core.PlaylistTracks(playlistId).Tracks.Any(t => t.Id == 0), "Unavailable playlist entry remains visible"); Assert(core.Tracks(folderId).Tracks.Count == 1 && core.Tracks(folderId).Tracks[0].Id == trackId, "Cache persists and external delete reconciles after restart"); }
+    await SessionChecks(sandbox, dll, args.Contains("--audio"));
     Console.WriteLine("PASS: native Rust ↔ C# vertical slice" + (args.Contains("--audio") ? " including Windows audio" : " (audio skipped)"));
 }
 finally { Directory.Delete(sandbox, true); }
@@ -171,4 +184,83 @@ static void ConvertAudio(string ffmpeg, string source, string target, string cod
     foreach (var argument in new[] { "-hide_banner", "-loglevel", "error", "-i", source, "-c:a", codec, target }) start.ArgumentList.Add(argument);
     using var process = System.Diagnostics.Process.Start(start) ?? throw new Exception("Cannot start ffmpeg");
     var error = process.StandardError.ReadToEnd(); process.WaitForExit(); if (process.ExitCode != 0) throw new Exception("Fixture conversion failed: " + error);
+}
+
+static async Task SessionChecks(string sandbox, string dll, bool audio)
+{
+    var root = Path.Combine(sandbox, "Session files"); Directory.CreateDirectory(root);
+    var other = Path.Combine(root, "Loose tracks"); Directory.CreateDirectory(other);
+    var aPath = Path.Combine(root, "01 - Session.wav"); var bPath = Path.Combine(other, "02 - Other.wav");
+    Wave(aPath, 220); Wave(bPath, 250);
+    var db = Path.Combine(sandbox, "session.db"); long rootId; Track a, b;
+    using (var core = new Core(db))
+    {
+        core.AddRoot(root); rootId = core.Folders().Folders.Single().Id;
+        a = core.Tracks(rootId).Tracks.Single(); b = core.Tracks(core.Folders(rootId).Folders.Single().Id).Tracks.Single();
+        core.Selection(new[] { a, b, a }, 1); core.Command(6, 0.23); core.Command(7); core.Command(8);
+    }
+    using (var core = new Core(db))
+    {
+        Assert(core.Queue().Tracks.Select(t => t.Id).SequenceEqual(new[] { a.Id, b.Id, a.Id }), "Restart preserves mixed queue sources, order and duplicates");
+        var state = core.Now(); Assert(!state.Playing && state.CurrentIndex == -1 && state.Position == 0, "Upcoming-only queue restores without starting audio");
+        Assert(Math.Abs(state.Volume - 0.23) < 0.001 && state.Flags == 3, "Volume, mute and repeat restore");
+        if (audio)
+        {
+            core.Command(1); await Wait(() => core.Now().Playing && core.Now().CurrentIndex == 0, "Play starts first item of a restored upcoming-only queue");
+            core.Command(14, 1); core.Command(5, 2); core.Command(1);
+            core.Selection(new[] { a }, 2);
+        }
+    }
+    if (audio)
+    {
+        using (var core = new Core(db))
+        {
+            var state = core.Now(); Assert(!state.Playing && state.CurrentIndex == 1 && state.CurrentId == b.Id && state.Position > 1.9 && state.Position < 2.4, "Current occurrence and seek position restore paused");
+            await Task.Delay(250); Assert(Math.Abs(core.Now().Position - state.Position) < 0.001, "Restored position stays frozen until explicit resume");
+            core.Selection(new[] { b }, 2);
+            Assert(core.Queue().Tracks.Select(t => t.Id).SequenceEqual(new[] { a.Id, b.Id, a.Id, b.Id, a.Id }), "Restored Play next requests continue FIFO ahead of original suffix");
+            core.Command(1); await Wait(() => core.Now().Playing && core.Now().Position > 2.4, "Explicit resume opens WASAPI and seeks restored position");
+            core.Command(1);
+        }
+    }
+    var renamed = Path.Combine(root, "03 - Moved.wav"); File.Move(aPath, renamed);
+    using (var core = new Core(db)) { core.Rescan(); }
+    using (var core = new Core(db))
+    {
+        Assert(core.Queue().Tracks.Where(t => t.Id == a.Id).All(t => t.Path == renamed), "Restored queue resolves renamed tracks by stable ID");
+    }
+    File.Delete(bPath);
+    using (var core = new Core(db)) { core.Rescan(); }
+    using (var core = new Core(db))
+    {
+        Assert(core.Queue().Tracks.Any(t => t.Id == 0 && t.Path == bPath && t.Title.StartsWith("Unavailable · ")), "Unavailable session occurrences preserve their last known path");
+        if (audio)
+        {
+            bool rejected = false; try { core.Command(1); } catch (InvalidOperationException) { rejected = true; }
+            Assert(rejected && !core.Now().Playing && core.Now().CurrentIndex == 1, "Missing restored source fails safely without changing queue");
+            core.Command(14, 0); core.Command(5, 7.8);
+            await Wait(() => !core.Now().Playing && core.Now().CurrentIndex == 1 && core.Now().Error.Contains("unavailable"), "Natural advance stops visibly at a missing occurrence");
+            await Task.Delay(250); Assert(core.Now().CurrentIndex == 1 && core.Now().Position == 0, "Missing occurrence is not silently skipped");
+        }
+    }
+    if (audio)
+    {
+        var marker = Path.Combine(sandbox, "checkpoint.ready");
+        var start = new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, RedirectStandardError = true };
+        if ((Path.GetFileNameWithoutExtension(Environment.ProcessPath) ?? "").Equals("dotnet", StringComparison.OrdinalIgnoreCase)) start.ArgumentList.Add(typeof(Spiewak.Native.Core).Assembly.Location);
+        foreach (var value in new[] { dll, "--session-child", db, rootId.ToString(), a.Id.ToString(), marker }) start.ArgumentList.Add(value);
+        using var process = System.Diagnostics.Process.Start(start) ?? throw new Exception("Cannot start checkpoint child");
+        try
+        {
+            for (int i = 0; i < 150 && !File.Exists(marker) && !process.HasExited; i++) await Task.Delay(100);
+            if (!File.Exists(marker)) throw new Exception("Checkpoint child did not become ready: " + (process.HasExited ? process.StandardError.ReadToEnd() : "timeout"));
+            process.Kill(); await process.WaitForExitAsync();
+            using var core = new Core(db); var state = core.Now();
+            Assert(!state.Playing && state.CurrentId == a.Id && state.Position > 4.5 && state.Position < 6.5 && Math.Abs(state.Volume - 0.19) < 0.001, "Abrupt process termination restores periodic checkpoint without autoplay");
+        }
+        finally { if (!process.HasExited) { process.Kill(); await process.WaitForExitAsync(); } }
+    }
+    var invalid = Path.Combine(sandbox, "invalid.db"); File.WriteAllText(invalid, "This is not SQLite");
+    bool detailed = false; try { using var bad = new Core(invalid); } catch (IOException e) { detailed = e.Message.Contains("not a database", StringComparison.OrdinalIgnoreCase); }
+    Assert(detailed, "Startup reports actual database error instead of a generic permissions claim");
 }

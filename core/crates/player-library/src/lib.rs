@@ -8,6 +8,7 @@ mod identity;
 mod monitor;
 mod playlists;
 mod presentation;
+mod session;
 pub use monitor::Monitor;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::{
@@ -113,7 +114,7 @@ impl Library {
         let schema_version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if schema_version > 6 {
+        if schema_version > 7 {
             return Err("This library cache belongs to a newer version of Spiewak. Update the app before opening it.".into());
         }
         db.busy_timeout(std::time::Duration::from_secs(10))
@@ -175,6 +176,15 @@ impl Library {
             db.execute_batch("SAVEPOINT migration;
               ALTER TABLE folders ADD COLUMN presentation INTEGER NOT NULL DEFAULT 0 CHECK(presentation BETWEEN 0 AND 6);
               PRAGMA user_version=6; RELEASE migration;").map_err(|e|e.to_string())?;
+        }
+        if schema_version < 7 {
+            db.execute_batch("SAVEPOINT migration;
+              CREATE TABLE playback_session(id INTEGER PRIMARY KEY CHECK(id=1),current_index INTEGER,next_end INTEGER,position REAL NOT NULL,volume REAL NOT NULL,flags INTEGER NOT NULL);
+              CREATE TABLE session_items(position INTEGER PRIMARY KEY,track_id INTEGER REFERENCES tracks(id) ON DELETE SET NULL,path TEXT NOT NULL,title TEXT NOT NULL,artist TEXT NOT NULL,album TEXT NOT NULL,album_artist TEXT NOT NULL,artwork TEXT NOT NULL,codec TEXT NOT NULL,duration REAL NOT NULL,number INTEGER NOT NULL,year INTEGER NOT NULL);
+              CREATE TRIGGER session_track_snapshot BEFORE DELETE ON tracks BEGIN
+                UPDATE session_items SET path=old.path,title=old.title,artist=old.artist,album=old.album,album_artist=old.album_artist,artwork=old.artwork,codec=old.codec,duration=old.duration,number=old.number,year=old.year WHERE track_id=old.id;
+              END;
+              PRAGMA user_version=7; RELEASE migration;").map_err(|e|e.to_string())?;
         }
         Ok(Self { db })
     }
@@ -612,7 +622,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT_SANDBOX: AtomicU64 = AtomicU64::new(0);
-    fn sandbox() -> PathBuf {
+    pub(super) fn sandbox() -> PathBuf {
         let p = std::env::temp_dir().join(format!(
             "spiewak-test-{}-{}-{}",
             std::process::id(),
@@ -625,7 +635,7 @@ mod tests {
         fs::create_dir(&p).unwrap();
         p
     }
-    fn wav(path: &Path) {
+    pub(super) fn wav(path: &Path) {
         let samples = vec![0u8; 8820];
         let mut bytes = Vec::new();
         bytes.extend(b"RIFF");
