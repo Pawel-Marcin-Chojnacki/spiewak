@@ -51,6 +51,7 @@ pub struct Snapshot {
     revision: u64,
     playing: u32,
     volume: f32,
+    flags: u32,
     error: *const c_char,
     message: *const c_char,
     strings: Vec<CString>,
@@ -70,6 +71,7 @@ impl Default for Snapshot {
             revision: 0,
             playing: 0,
             volume: 0.75,
+            flags: 0,
             error: std::ptr::null(),
             message: std::ptr::null(),
             strings: Vec::new(),
@@ -157,7 +159,7 @@ unsafe fn text<'a>(ptr: *const c_char) -> Result<&'a str, String> {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn spiewak_abi_version() -> u32 {
-    1
+    2
 }
 /// # Safety
 /// `path` must point to a valid NUL-terminated UTF-8 database path during this call.
@@ -289,6 +291,36 @@ pub unsafe extern "C" fn spiewak_play_folder(
     })
 }
 /// # Safety
+/// `ptr` must be live; `ids` must reference `count` valid i64 IDs for this call.
+/// Mode 0 plays selection; 1 appends; 2 inserts immediately after current.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_selection(
+    ptr: *mut Core,
+    ids: *const i64,
+    count: usize,
+    mode: u32,
+) -> *mut Snapshot {
+    guard(|| {
+        if ids.is_null() || count == 0 || count > 100_000 {
+            return Err("Select tracks first.".into());
+        }
+        let c = unsafe { core(ptr) }?;
+        let rows = c
+            .library
+            .lock()
+            .map_err(|_| "Library unavailable.")?
+            .selected_tracks(unsafe { std::slice::from_raw_parts(ids, count) })?;
+        let command = match mode {
+            0 => Command::Replace(rows, 0),
+            1 => Command::Append(rows, false),
+            2 => Command::Append(rows, true),
+            _ => return Err("Unknown selection action.".into()),
+        };
+        c.audio.command(command)?;
+        Ok(Snapshot::default())
+    })
+}
+/// # Safety
 /// `ptr` must be live. Commands: 1 toggle, 2 stop, 3 next, 4 previous, 5 seek seconds, 6 volume [0,1].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spiewak_audio_command(
@@ -304,6 +336,26 @@ pub unsafe extern "C" fn spiewak_audio_command(
             4 => Command::Previous,
             5 => Command::Seek(value),
             6 => Command::Volume(value as f32),
+            7 => Command::Mute,
+            8 => Command::Repeat,
+            9 => Command::Shuffle,
+            10..=12 | 14 => {
+                if !value.is_finite()
+                    || value < 0.0
+                    || value.fract() != 0.0
+                    || value > usize::MAX as f64
+                {
+                    return Err("Invalid queue position.".into());
+                }
+                let index = value as usize;
+                match command {
+                    10 => Command::Remove(index),
+                    11 => Command::Move(index, true),
+                    12 => Command::Move(index, false),
+                    _ => Command::Jump(index),
+                }
+            }
+            13 => Command::Clear,
             _ => return Err("Unknown audio command.".into()),
         };
         unsafe { core(ptr) }?.audio.command(command)?;
@@ -323,6 +375,7 @@ pub unsafe extern "C" fn spiewak_now(ptr: *mut Core) -> *mut Snapshot {
             revision: playback.revision,
             playing: u32::from(playback.playing),
             volume: playback.volume,
+            flags: playback.flags,
             ..Default::default()
         };
         s.error = s.string(&playback.error);
@@ -340,7 +393,7 @@ mod tests {
     use super::*;
     #[test]
     fn snapshot_layout_and_utf8_ownership() {
-        assert_eq!(spiewak_abi_version(), 1);
+        assert_eq!(spiewak_abi_version(), 2);
         assert_eq!(std::mem::size_of::<FolderDto>(), 40);
         assert_eq!(std::mem::size_of::<TrackDto>(), 80);
         let s = Snapshot::default().tracks(vec![Track {

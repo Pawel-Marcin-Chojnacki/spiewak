@@ -12,7 +12,7 @@ typedef struct SpiewakSnapshot {
  const SpiewakFolder *folders; size_t folder_count;
  const SpiewakTrack *tracks; size_t track_count;
  double position; int64_t current_id, current_index; uint64_t revision;
- uint32_t playing; float volume; const char *error, *message;
+ uint32_t playing; float volume; uint32_t flags; const char *error, *message;
 } SpiewakSnapshot;
 uint32_t spiewak_abi_version(void);
 SpiewakCore *spiewak_open(const char *database_path);
@@ -26,6 +26,11 @@ SpiewakSnapshot *spiewak_play_folder(SpiewakCore *, int64_t folder, int64_t trac
 SpiewakSnapshot *spiewak_audio_command(SpiewakCore *, uint32_t command, double value);
 SpiewakSnapshot *spiewak_now(SpiewakCore *);
 SpiewakSnapshot *spiewak_queue(SpiewakCore *);
+
+
+// Selection mode: 0 play, 1 append, 2 play next. Queue command indexes are zero-based.
+SpiewakSnapshot* spiewak_selection(SpiewakCore*, const int64_t* ids, size_t count, uint32_t mode);
+
 #ifdef __cplusplus
 }
 #endif

@@ -16,7 +16,7 @@ public sealed record Track(long Id, long Folder, string Title, string Artist, st
     public static string FormatTime(double seconds) => TimeSpan.FromSeconds(Math.Max(0, seconds)).ToString(seconds >= 3600 ? @"h\:mm\:ss" : @"m\:ss");
 }
 public sealed record Result(IReadOnlyList<Folder> Folders, IReadOnlyList<Track> Tracks, double Position,
-    long CurrentId, long CurrentIndex, ulong Revision, bool Playing, float Volume, string Error, string Message);
+    long CurrentId, long CurrentIndex, ulong Revision, bool Playing, float Volume, uint Flags, string Error, string Message);
 
 internal sealed class CoreHandle : SafeHandleZeroOrMinusOneIsInvalid
 {
@@ -38,6 +38,7 @@ internal static class NativeMethods
     [DllImport(Dll, EntryPoint = "spiewak_audio_command", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Command(CoreHandle core, uint command, double value);
     [DllImport(Dll, EntryPoint = "spiewak_now", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Now(CoreHandle core);
     [DllImport(Dll, EntryPoint = "spiewak_queue", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Queue(CoreHandle core);
+    [DllImport(Dll, EntryPoint = "spiewak_selection", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Selection(CoreHandle core, [In] long[] ids, nuint count, uint mode);
 }
 public sealed class Core : IDisposable
 {
@@ -47,7 +48,7 @@ public sealed class Core : IDisposable
     {
         public nint Folders; public nuint FolderCount; public nint Tracks; public nuint TrackCount;
         public double Position; public long CurrentId; public long CurrentIndex; public ulong Revision;
-        public uint Playing; public float Volume; public nint Error; public nint Message;
+        public uint Playing; public float Volume; public uint Flags; public nint Error; public nint Message;
     }
     [StructLayout(LayoutKind.Sequential)]
     private struct FolderRow
@@ -60,7 +61,7 @@ public sealed class Core : IDisposable
     }
     public Core(string databasePath)
     {
-        if (NativeMethods.Version() != 1 || Marshal.SizeOf<FolderRow>() != 40 || Marshal.SizeOf<TrackRow>() != 80)
+        if (NativeMethods.Version() != 2 || Marshal.SizeOf<FolderRow>() != 40 || Marshal.SizeOf<TrackRow>() != 80 || Marshal.SizeOf<Header>() != 96)
             throw new InvalidOperationException("The native core has an incompatible ABI. Rebuild the application.");
         handle = new CoreHandle(NativeMethods.Open(databasePath));
         if (handle.IsInvalid) throw new IOException($"Cannot open the library cache at {databasePath}. Check folder permissions.");
@@ -83,7 +84,7 @@ public sealed class Core : IDisposable
                 var row = Marshal.PtrToStructure<TrackRow>(header.Tracks + checked((nint)i * Marshal.SizeOf<TrackRow>()));
                 tracks.Add(new(row.Id, row.Folder, Text(row.Title), Text(row.Artist), Text(row.Album), Text(row.Path), Text(row.Artwork), Text(row.Codec), row.Duration, row.Number, row.Year));
             }
-            return new(folders, tracks, header.Position, header.CurrentId, header.CurrentIndex, header.Revision, header.Playing != 0, header.Volume, Text(header.Error), Text(header.Message));
+            return new(folders, tracks, header.Position, header.CurrentId, header.CurrentIndex, header.Revision, header.Playing != 0, header.Volume, header.Flags, Text(header.Error), Text(header.Message));
         }
         finally { NativeMethods.Free(pointer); }
     }
@@ -97,5 +98,6 @@ public sealed class Core : IDisposable
     public Result Command(uint command, double value = 0) => Checked(NativeMethods.Command(handle, command, value));
     public Result Now() => Read(NativeMethods.Now(handle));
     public Result Queue() => Checked(NativeMethods.Queue(handle));
+    public Result Selection(IEnumerable<Track> tracks, uint mode) { var ids = tracks.Select(t => t.Id).ToArray(); return Checked(NativeMethods.Selection(handle, ids, (nuint)ids.Length, mode)); }
     public void Dispose() => handle.Dispose();
 }

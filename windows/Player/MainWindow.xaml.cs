@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private ulong queueRevision = ulong.MaxValue;
     private string shownAudioError = "";
     private long playingId;
+    private int queueStartIndex;
     private double? pendingSeek;
     private readonly DispatcherTimer seekTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     private int navigationVersion;
@@ -41,9 +42,16 @@ public partial class MainWindow : Window
     {
         try
         {
-            var data = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Spiewak");
+            bool demo = Environment.GetCommandLineArgs().Contains("--demo");
+            var data = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), demo ? "SpiewakDemo" : "Spiewak");
             core = await Task.Run(() => new Core(System.IO.Path.Combine(data, "library.db")));
             if (closed) { core.Dispose(); return; }
+            if (demo)
+            {
+                var sample = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyMusic), "Spiewak Demo");
+                await Task.Run(() => core.AddRoot(sample));
+                Title = "Śpiewak — Demo collection";
+            }
             await ReloadTree(); timer.Start();
             var roots = await Task.Run(() => core.Folders());
             if (roots.Folders.Count > 0) await Browse(roots.Folders[0], false);
@@ -128,9 +136,27 @@ public partial class MainWindow : Window
     private async Task Play(Track track)
     { if (core is null) return; try { await Task.Run(() => core.Play(track.Folder, track.Id)); } catch (Exception e) { Error(e); } }
     private async void TrackDoubleTapped(object sender, DoubleTappedRoutedEventArgs args) { if (TrackList.SelectedItem is Track track) await Play(track); }
-    private async void PlaySelected(object sender, RoutedEventArgs args) { if (TrackList.SelectedItem is Track track) await Play(track); }
+    private async void PlaySelected(object sender, RoutedEventArgs args) => await Selection(0);
+    private async void AddNext(object sender, RoutedEventArgs args) => await Selection(2);
+    private async void AddToQueue(object sender, RoutedEventArgs args) => await Selection(1);
+    private async Task Selection(uint mode)
+    {
+        if (core is null) return;
+        var selected = tracks.Where(t => TrackList.SelectedItems.Contains(t)).ToArray();
+        if (selected.Length == 0) return;
+        try { await Task.Run(() => core.Selection(selected, mode)); } catch (Exception e) { Error(e); }
+    }
     private async void PlayFolder(object sender, RoutedEventArgs args) { if (tracks.FirstOrDefault() is Track track) await Play(track); }
-    private async void QueueDoubleTapped(object sender, DoubleTappedRoutedEventArgs args) { if (QueueList.SelectedItem is Track track) await Play(track); }
+    private async void QueueDoubleTapped(object sender, DoubleTappedRoutedEventArgs args) { if (QueueList.SelectedIndex >= 0) await Command(14, queueStartIndex + QueueList.SelectedIndex); }
+    private async void ShuffleQueue(object sender, RoutedEventArgs args) => await Command(9);
+    private async void CycleRepeat(object sender, RoutedEventArgs args) => await Command(8);
+    private async void Mute(object sender, RoutedEventArgs args) => await Command(7);
+    private async Task EditQueue(uint command) { if (QueueList.SelectedIndex >= 0) await Command(command, queueStartIndex + QueueList.SelectedIndex); }
+    private async void RemoveQueue(object sender, RoutedEventArgs args) => await EditQueue(10);
+    private async void MoveQueueUp(object sender, RoutedEventArgs args) => await EditQueue(11);
+    private async void MoveQueueDown(object sender, RoutedEventArgs args) => await EditQueue(12);
+    private async void ClearQueue(object sender, RoutedEventArgs args) => await Command(13);
+    private async void QueueKeyDown(object sender, KeyRoutedEventArgs args) { if (args.Key == VirtualKey.Delete) { args.Handled = true; await EditQueue(10); } else if (args.Key == VirtualKey.Enter && QueueList.SelectedIndex >= 0) { args.Handled = true; await Command(14, queueStartIndex + QueueList.SelectedIndex); } }
     private async Task Command(uint command, double value = 0)
     { if (core is null || closed) return; try { await Task.Run(() => core.Command(command, value)); } catch (Exception e) { Error(e); } }
     private async void TogglePlayback(object sender, RoutedEventArgs args) => await Command(1);
@@ -155,6 +181,8 @@ public partial class MainWindow : Window
             var state = await Task.Run(() => core.Now()); if (closed) return;
             if (state.Error.Length > 0 && state.Error != shownAudioError) { ErrorBar.Message = state.Error; ErrorBar.IsOpen = true; }
             shownAudioError = state.Error;
+            MuteIcon.Glyph = (state.Flags & 1) != 0 ? "\uE74F" : "\uE767";
+            RepeatLabel.Text = ((state.Flags >> 1) & 3) switch { 1 => "↻∞", 2 => "↻1", _ => "↻" };
             var track = state.Tracks.FirstOrDefault();
             if (playingId != state.CurrentId) { playingId = state.CurrentId; PlayingTitle.Text = track?.Title ?? "Nothing playing"; PlayingArtist.Text = track?.ArtistLabel ?? "Choose something from your folders"; PlayingArt.Source = Image(track?.Artwork, 112); }
             updatingSeek = true; SeekSlider.Maximum = Math.Max(1, track?.Duration ?? 1); if (pendingSeek is null) SeekSlider.Value = Math.Clamp(state.Position, 0, SeekSlider.Maximum); SeekSlider.IsEnabled = track?.Duration > 0; updatingSeek = false;
@@ -162,7 +190,7 @@ public partial class MainWindow : Window
             if (queueRevision != state.Revision)
             {
                 queueRevision = state.Revision; var result = await Task.Run(() => core.Queue()); if (closed) return;
-                queue.Clear(); foreach (var queued in result.Tracks.Skip((int)Math.Max(0, state.CurrentIndex + 1))) queue.Add(queued);
+                queueStartIndex = (int)Math.Max(0, state.CurrentIndex + 1); queue.Clear(); foreach (var queued in result.Tracks.Skip(queueStartIndex)) queue.Add(queued);
                 QueueSummary.Text = $"{queue.Count} upcoming · {track?.Title ?? "Nothing playing"}";
             }
         }

@@ -18,6 +18,7 @@ pub struct Playback {
     pub current: Option<usize>,
     pub revision: u64,
     pub error: String,
+    pub flags: u32,
 }
 pub enum Command {
     Replace(Vec<Track>, usize),
@@ -27,6 +28,14 @@ pub enum Command {
     Previous,
     Seek(f64),
     Volume(f32),
+    Append(Vec<Track>, bool),
+    Mute,
+    Repeat,
+    Shuffle,
+    Remove(usize),
+    Move(usize, bool),
+    Clear,
+    Jump(usize),
 }
 type Request = (Command, mpsc::Sender<Result<(), String>>);
 pub struct Audio {
@@ -52,6 +61,8 @@ impl Audio {
             let mut device = None;
             let mut player: Option<Player> = None;
             let mut volume = 0.75;
+            let mut muted = false;
+            let mut repeat = 0;
             let mut auto_advance = false;
             let mut changed = false;
             loop {
@@ -71,7 +82,7 @@ impl Audio {
                                 load = true
                             }
                             Command::Next => {
-                                if queue.advance().is_some() {
+                                if queue.advance(false, repeat).is_some() {
                                     load = true
                                 } else if let Some(p) = &player {
                                     auto_advance = false;
@@ -117,13 +128,34 @@ impl Audio {
                                     .map_err(|e| format!("Cannot seek this file: {e}"))?;
                                 }
                             }
+                            Command::Append(tracks, next) => queue.append(tracks, next),
+                            Command::Mute => {
+                                muted = !muted;
+                                if let Some(p) = &player {
+                                    p.set_volume(if muted { 0.0 } else { volume });
+                                }
+                            }
+                            Command::Repeat => repeat = (repeat + 1) % 3,
+                            Command::Shuffle => queue.shuffle(
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_nanos() as u64,
+                            ),
+                            Command::Remove(index) => queue.remove(index)?,
+                            Command::Move(index, up) => queue.move_item(index, up)?,
+                            Command::Clear => queue.clear_upcoming(),
+                            Command::Jump(index) => {
+                                queue.jump(index)?;
+                                load = true;
+                            }
                             Command::Volume(value) => {
                                 if !value.is_finite() {
                                     return Err("Invalid volume.".into());
                                 }
                                 volume = value.clamp(0.0, 1.0);
                                 if let Some(p) = &player {
-                                    p.set_volume(volume)
+                                    p.set_volume(if muted { 0.0 } else { volume })
                                 }
                             }
                         }
@@ -141,7 +173,7 @@ impl Audio {
                                     })?)
                             }
                             let next = Player::connect_new(device.as_ref().unwrap().mixer());
-                            next.set_volume(volume);
+                            next.set_volume(if muted { 0.0 } else { volume });
                             next.append(source);
                             if let Some(p) = player.take() {
                                 p.stop()
@@ -163,7 +195,7 @@ impl Audio {
                     let _ = reply.send(result);
                 } else if auto_advance
                     && player.as_ref().is_some_and(|p| p.empty() && !p.is_paused())
-                    && queue.advance().is_some()
+                    && queue.advance(true, repeat).is_some()
                 {
                     changed = true;
                     let track = queue.selected().unwrap();
@@ -173,7 +205,7 @@ impl Audio {
                     {
                         Ok(source) => {
                             let next = Player::connect_new(device.as_ref().unwrap().mixer());
-                            next.set_volume(volume);
+                            next.set_volume(if muted { 0.0 } else { volume });
                             next.append(source);
                             player = Some(next);
                         }
@@ -194,6 +226,7 @@ impl Audio {
                         changed = false;
                     }
                     s.volume = volume;
+                    s.flags = u32::from(muted) | (repeat << 1);
                     s.playing = player
                         .as_ref()
                         .is_some_and(|p| !p.is_paused() && !p.empty());
@@ -229,6 +262,7 @@ impl Audio {
                 current: s.current,
                 revision: s.revision,
                 error: s.error.clone(),
+                flags: s.flags,
                 queue: Arc::from([]),
             })
             .map_err(|_| "Playback state unavailable.".into())

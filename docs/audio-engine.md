@@ -9,3 +9,5 @@ Play builds a queue from the chosen folder. Pause/resume, stop, bounded seek, ne
 Compiled decoders cover WAV, MP3, FLAC, Vorbis, AAC/M4A and ALAC. **Opus decoding is not provided by the pinned Symphonia version.** Opus files can be indexed but playback reports a decoding error. Generated MP3, FLAC, AAC/M4A, ALAC, Ogg Vorbis and WAV fixtures have passed index/decode/play/seek integration on Windows ARM64; see STATUS.md.
 
 Automatic next has a short transition; gapless playback, preloading, ReplayGain, output-device selection and mute UI are not yet implemented. Do not claim gapless correctness or add crossfade before measuring sample continuity.
+
+Mixed selection queues support append/play-next, duplicate entries, upcoming removal/reorder/clear, and jump without rebuilding a folder queue. Shuffle reorders the upcoming suffix; current playback/history stay intact. Repeat-one applies to natural completion; explicit Next advances. Mute preserves remembered volume. Queue state is still session-only.

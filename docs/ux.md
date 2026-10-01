@@ -9,3 +9,5 @@ Space toggles playback; Alt+Left goes back; native extended selection supports C
 No navigation entries advertise unfinished Albums, Artists, Playlists or Inbox views. Those are later features. The first slice has no search, forward history, persistent layout/tree expansion, resizable left pane, playlist actions or global media-key support. Selected-track Play presently starts its folder queue; batch selection operations are later work.
 
 Actual screenshots must be inspected for each completed iteration. UI automation access through Parallels may need separate input tooling; record the testing method and limits in STATUS.md.
+
+The interim visual direction is a quiet dark music workspace, off-white text and lavender transport accent. Design/Theme.xaml owns semantic colors and shared control styles (light/high contrast also defined). Retain native focus/keyboard/screen-reader behavior when refining visuals later. This is a functional baseline, not final UI/UX approval.

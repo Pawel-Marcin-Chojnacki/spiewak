@@ -27,10 +27,23 @@ try
         Console.WriteLine($"Metadata: title={tracks[0].Title}; artist={tracks[0].Artist}; album={tracks[0].Album}");
         Assert(tracks[0].Title == "Morning" && tracks[0].Artist == "Spiewak Sessions" && tracks[0].Album == "Field Notes", "Metadata tags enrich, never reparent folders");
         trackId = tracks[0].Id;
+        core.Selection(tracks, 1); await Wait(() => core.Queue().Tracks.Count == 2, "Append selection without auto-playing");
+        Assert(!core.Now().Playing, "Queue additions do not start audio");
+        core.Command(12, 0); await Wait(() => core.Queue().Tracks[0].Id == tracks[1].Id, "Queue move down");
+        core.Command(10, 0); await Wait(() => core.Queue().Tracks.Count == 1, "Remove queue item");
+        core.Command(13); await Wait(() => core.Queue().Tracks.Count == 0, "Clear upcoming");
         if (args.Contains("--audio"))
         {
             core.Play(folderId, trackId); await Wait(() => core.Now().Playing && core.Now().Position > 0.15, "Audio starts through WASAPI");
             Assert(core.Queue().Tracks.Count == 2, "Queue contains the whole folder");
+            core.Selection(new[] { tracks[1], tracks[0] }, 2); await Wait(() => core.Queue().Tracks.Count == 4, "Insert selection next preserving duplicates");
+            Assert(core.Queue().Tracks[2].Id == trackId, "Inserted selection order");
+            core.Command(10, 2); core.Command(10, 1); await Wait(() => core.Queue().Tracks.Count == 2, "Edit upcoming while audio continues");
+            core.Command(7); await Wait(() => (core.Now().Flags & 1) != 0 && core.Now().Playing, "Mute preserves playback"); core.Command(7);
+            core.Command(8); await Wait(() => ((core.Now().Flags >> 1) & 3) == 1, "Repeat queue state");
+            core.Command(8); await Wait(() => ((core.Now().Flags >> 1) & 3) == 2, "Repeat track state");
+            core.Command(5, 7.8); await Wait(() => core.Now().Position < 1 && core.Now().Playing, "Natural end repeats same track");
+            core.Command(8); await Wait(() => (core.Now().Flags & 6) == 0, "Repeat off");
             core.Command(1); await Task.Delay(100); var paused = core.Now(); await Task.Delay(250); Assert(!core.Now().Playing && Math.Abs(core.Now().Position - paused.Position) < 0.08, "Pause freezes playback position");
             core.Command(1); await Wait(() => core.Now().Playing, "Resume");
             core.Command(5, 3); await Wait(() => core.Now().Position > 2.8, "Seek");

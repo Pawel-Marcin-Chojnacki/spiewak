@@ -37,6 +37,13 @@ fn stamp(meta: &fs::Metadata) -> i64 {
         .as_nanos() as i64
 }
 fn is_audio(path: &Path) -> bool {
+    // AppleDouble sidecars from macOS shares have audio extensions but contain no audio.
+    if path
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().starts_with("._"))
+    {
+        return false;
+    }
     path.extension().is_some_and(|e| {
         matches!(
             e.to_string_lossy().to_ascii_lowercase().as_str(),
@@ -292,6 +299,19 @@ impl Library {
         .map_err(|e| e.to_string())?;
         Ok(report)
     }
+    pub fn selected_tracks(&self, ids: &[i64]) -> Result<Vec<Track>> {
+        if ids.is_empty() || ids.len() > 100_000 {
+            return Err("Select tracks first (up to 100,000).".into());
+        }
+        let mut stmt = self.db.prepare("SELECT id,folder_id,path,title,artist,album,album_artist,artwork,codec,duration,number,year FROM tracks WHERE id=?").map_err(|e|e.to_string())?;
+        ids.iter()
+            .map(|id| {
+                stmt.query_row([id], track_row).map_err(|_| {
+                    format!("Track {id} is no longer in the library. Rescan its folder.")
+                })
+            })
+            .collect()
+    }
     pub fn folders(&self, parent: i64) -> Result<Vec<Folder>> {
         let mut stmt=self.db.prepare("SELECT f.id,coalesce(f.parent_id,0),f.name,f.path,EXISTS(SELECT 1 FROM folders c WHERE c.parent_id=f.id) FROM folders f WHERE coalesce(f.parent_id,0)=? ORDER BY f.name COLLATE NOCASE").map_err(|e|e.to_string())?;
         stmt.query_map([parent], |r| {
@@ -383,6 +403,7 @@ mod tests {
         let album = root.join("Artist").join("Album");
         fs::create_dir_all(&album).unwrap();
         wav(&album.join("01 - Song.wav"));
+        fs::write(album.join("._01 - Song.wav"), b"AppleDouble").unwrap();
         let lib = Library::open(&p.join("index.db")).unwrap();
         assert_eq!(lib.add_root(&root).unwrap().tracks, 1);
         let top = lib.folders(0).unwrap();
