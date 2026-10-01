@@ -49,8 +49,12 @@ SpiewakSnapshot *spiewak_folder(SpiewakCore *core, int64_t id);
 SpiewakSnapshot *spiewak_refresh_queue(SpiewakCore *core);
 /* Folder kinds: 0 auto, 1 album, 2 artist, 3 loose, 4 mixed, 5 compilation, 6 collection. */
 SpiewakSnapshot *spiewak_folder_kind(SpiewakCore *, int64_t id, uint32_t kind);
+/* Inbox actions: 0 status/folders, 1 enable existing folder, 2 disable; no file writes.
+   Complete takes the ID/event_time pair from listening view 3 and rejects stale files. */
+SpiewakSnapshot *spiewak_inbox(SpiewakCore *, int64_t folder, uint32_t action);
+SpiewakSnapshot *spiewak_inbox_complete(SpiewakCore *, int64_t track, int64_t observed);
 SpiewakSnapshot *spiewak_listening_state(SpiewakCore *);
-/* Listening view: 0 favorites, 1 recently added, 2 history; offset/index are zero-based. */
+/* Listening view: 0 favorites, 1 recently added, 2 history, 3 Inbox Needs Review; offset/index are zero-based. */
 SpiewakSnapshot *spiewak_listening_tracks(SpiewakCore *, uint32_t view, uint32_t offset);
 SpiewakSnapshot *spiewak_favorites(SpiewakCore *, const int64_t *ids, size_t count, uint32_t favorite);
 SpiewakSnapshot *spiewak_play_listening(SpiewakCore *, uint32_t view, uint32_t index);

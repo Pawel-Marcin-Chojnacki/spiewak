@@ -88,7 +88,7 @@ public partial class MainWindow : Window
     private async Task Browse(Folder folder, bool remember)
     {
         if (core is null) return;
-        currentListening = -1; currentPlaylist = 0; PlaylistTools.Visibility = Visibility.Collapsed; SortBox.Visibility = Visibility.Visible;
+        InboxTools.Visibility = Visibility.Collapsed; currentListening = -1; currentPlaylist = 0; PlaylistTools.Visibility = Visibility.Collapsed; SortBox.Visibility = Visibility.Visible;
         changingSearch = true; SearchBox.Text = ""; changingSearch = false; searchTimer.Stop();
         var version = ++navigationVersion;
         var latest = await Task.Run(() => core.Folder(folder.Id));
@@ -105,7 +105,7 @@ public partial class MainWindow : Window
         EmptyState.Visibility = tracks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         EmptyState.Text = folderTask.Result.Folders.Count > 0 ? "Open a subfolder to explore its tracks." : "No supported audio files in this folder.";
         FolderSummary.Text = $"{folder.KindLabel} · {folder.TrackCount} tracks · {folderTask.Result.Folders.Count} subfolders";
-        FolderViewButton.Visibility = Visibility.Visible; FolderViewButton.Content = folder.KindLabel;
+        FolderViewButton.Visibility = Visibility.Visible; FolderViewButton.Content = "Folder options";
         ToolTipService.SetToolTip(FolderViewButton, folder.OverrideKind == FolderKind.Auto ? "Automatic presentation · change only how this folder appears" : "Your chosen presentation · files stay in this folder");
         SetFolderArtwork(folder.AlbumPresentation);
         MoreButton.Visibility = tracks.Count == 500 ? Visibility.Visible : Visibility.Collapsed;
@@ -199,7 +199,7 @@ public partial class MainWindow : Window
     private async void ToggleShortcut(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { if (metadataDialogOpen || FocusManager.GetFocusedElement(Shell.XamlRoot) is TextBox) return; args.Handled = true; await Command(1); }
     private async void TrackKeyDown(object sender, KeyRoutedEventArgs args) { if (args.Key == VirtualKey.Enter && TrackList.SelectedItem is Track track) { args.Handled = true; await PlayOne(track); } }
     private void TrackSelectionChanged(object sender, SelectionChangedEventArgs args)
-    { UpdateSelectedFavorite(); if (TrackList.SelectedItem is Track track) { InspectorPath.Text = track.Path; InspectorAlbum.Text = $"{track.Album}\n{track.Codec} · {track.Time}" + (currentListening >= 0 && SearchBox.Text.Trim().Length == 0 ? $"\n{(currentListening == 2 ? "Started" : currentListening == 1 ? "Added" : "Favorited")}: {track.LibraryTime}" : ""); } }
+    { UpdateSelectedFavorite(); if (TrackList.SelectedItem is Track track) { InspectorPath.Text = track.Path; InspectorAlbum.Text = $"{track.Album}\n{track.Codec} · {track.Time}" + (currentListening >= 0 && SearchBox.Text.Trim().Length == 0 ? $"\n{(currentListening == 2 ? "Started" : currentListening == 1 ? "Added" : currentListening == 3 ? "Observed" : "Favorited")}: {track.LibraryTime}" : ""); } }
     private void ShowSelected(object sender, RoutedEventArgs args)
     { if (TrackList.SelectedItem is Track track) Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{track.Path}\"") { UseShellExecute = true }); }
     private async void GoBack(object sender, RoutedEventArgs args) => await Back();

@@ -26,7 +26,7 @@ public partial class MainWindow
         changingSearch = true; SearchBox.Text = ""; changingSearch = false; searchTimer.Stop(); var version = ++navigationVersion;
         var result = await Task.Run(() => core.PlaylistTracks(id)); var lists = await Task.Run(() => core.Playlists()); if (closed || version != navigationVersion) return;
         if (currentFolder is not null && currentPlaylist == 0) history.Push(currentFolder);
-        var playlist = lists.Playlists.Single(p => p.Id == id); currentListening = -1; currentPlaylist = id; currentFolder = null;
+        var playlist = lists.Playlists.Single(p => p.Id == id); InboxTools.Visibility = Visibility.Collapsed; currentListening = -1; currentPlaylist = id; currentFolder = null;
         tracks.Clear(); foreach (var track in result.Tracks) tracks.Add(track);
         FolderViewButton.Visibility = Visibility.Collapsed; SetFolderArtwork(false);
         ChildFolders.Visibility = Visibility.Collapsed; FolderArt.Source = null; FolderHeading.Text = playlist.Name; FolderSummary.Text = $"Playlist · {playlist.Count} tracks"; Breadcrumb.Text = "Playlists / " + playlist.Name;

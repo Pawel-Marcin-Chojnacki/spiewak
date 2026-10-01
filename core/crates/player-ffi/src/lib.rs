@@ -14,6 +14,7 @@ use std::{
 };
 
 mod discovery;
+mod inbox;
 mod metadata;
 pub struct Core {
     file_operation: Mutex<()>,
@@ -265,7 +266,7 @@ unsafe fn text<'a>(ptr: *const c_char) -> Result<&'a str, String> {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn spiewak_abi_version() -> u32 {
-    10
+    11
 }
 /// # Safety
 /// `path` must point to a valid NUL-terminated UTF-8 database path during this call.
@@ -834,7 +835,7 @@ pub unsafe extern "C" fn spiewak_folder_kind(ptr: *mut Core, id: i64, kind: u32)
     })
 }
 /// # Safety
-/// Live core; view 0 favorites, 1 recently added, 2 history. Page size 500.
+/// Live core; view 0 favorites, 1 recently added, 2 history, 3 Inbox Needs Review. Page size 500.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spiewak_listening_tracks(
     ptr: *mut Core,
@@ -929,7 +930,7 @@ mod tests {
     use super::*;
     #[test]
     fn snapshot_layout_and_utf8_ownership() {
-        assert_eq!(spiewak_abi_version(), 10);
+        assert_eq!(spiewak_abi_version(), 11);
         assert_eq!(std::mem::size_of::<FolderDto>(), 64);
         assert_eq!(std::mem::size_of::<TrackDto>(), 104);
         let s = Snapshot::default().tracks(vec![Track {

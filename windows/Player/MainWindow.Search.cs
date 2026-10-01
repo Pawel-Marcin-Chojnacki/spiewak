@@ -23,7 +23,7 @@ public partial class MainWindow
         try
         {
             var result = await Task.Run(() => core.Search(query)); if (closed || version != navigationVersion) return;
-            PlaylistTools.Visibility = Visibility.Collapsed; SortBox.Visibility = Visibility.Visible;
+            InboxTools.Visibility = Visibility.Collapsed; PlaylistTools.Visibility = Visibility.Collapsed; SortBox.Visibility = Visibility.Visible;
             tracks.Clear(); foreach (var track in result.Tracks) tracks.Add(track);
             ChildFolders.ItemsSource = result.Folders; ChildFolders.Visibility = result.Folders.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             FolderViewButton.Visibility = Visibility.Collapsed; SetFolderArtwork(false);

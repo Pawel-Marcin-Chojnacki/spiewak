@@ -23,3 +23,6 @@ Sources: [Windows identity API](https://learn.microsoft.com/en-us/windows/win32/
 Schema 5 adds monotonic entity ID allocation inside scan transactions. SQLite default row-ID reuse after deletion must not make a runtime queue point to a different song. Existing IDs remain unchanged during migration.
 
 Schema 6 persists a folder's requested presentation separately from metadata. Auto derives Album/LooseTracks/MixedCollection/UserCollection conservatively, using shared album/owner and unique positive track numbers. Manual Artist/Compilation/Album/Loose/Mixed/Collection overrides only affect app presentation; rescan and file-ID relocation retain them. There are no virtual album folders created from tags. A one-track tagged folder defaults to LooseTracks; album completeness cannot be inferred solely from this heuristic.
+
+
+Schema 14 adds `inbox_folders` (stable real folder ID and track-ID baseline) and `inbox_items` (stable track ID, observed size/time/identity, stability/retry times and review state). Both use foreign keys; disable/deletion removes app intake records only. No synthetic hierarchy is introduced. Existing libraries migrate with Inbox disabled. See smart-inbox.md.

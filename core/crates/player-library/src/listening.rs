@@ -26,6 +26,9 @@ impl Library {
     }
     /// Views: 0 favorites, 1 recently indexed, 2 successful playback starts (newest first).
     pub fn listening_tracks(&self, view: u32, offset: u32, limit: u32) -> Result<Vec<Track>> {
+        if view == 3 {
+            return self.inbox_tracks(offset, limit);
+        }
         let sql = match view {
             1 => "SELECT id,folder_id,path,title,artist,album,album_artist,artwork,codec,duration,number,year,EXISTS(SELECT 1 FROM favorites f WHERE f.original_id=tracks.id),id,added_at FROM tracks ORDER BY added_at DESC,id DESC LIMIT ? OFFSET ?".to_owned(),
             0 | 2 => {

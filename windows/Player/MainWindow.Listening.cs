@@ -19,16 +19,18 @@ public partial class MainWindow
         changingSearch = true; SearchBox.Text = ""; changingSearch = false; searchTimer.Stop();
         var version = ++navigationVersion;
         var result = await Task.Run(() => core.ListeningTracks(view));
+        var inbox = view == 3 ? await Task.Run(() => core.Inbox()) : null;
         if (closed || version != navigationVersion) return;
+        InboxTools.Visibility = view == 3 ? Visibility.Visible : Visibility.Collapsed;
         if (currentFolder is not null && currentListening < 0) history.Push(currentFolder);
         currentListening = (int)view; currentPlaylist = 0; currentFolder = null; listeningRevision = result.Revision;
         tracks.Clear(); foreach (var track in result.Tracks) tracks.Add(track);
         PlaylistTools.Visibility = Visibility.Collapsed; SortBox.Visibility = Visibility.Collapsed; FolderViewButton.Visibility = Visibility.Collapsed;
         ChildFolders.Visibility = Visibility.Collapsed; SetFolderArtwork(false); FolderArt.Source = null;
-        FolderHeading.Text = view switch { 0 => "Favorites", 1 => "Recently added", _ => "Listening history" };
-        FolderSummary.Text = $"{tracks.Count} entries loaded · newest first · files stay in their folders";
+        FolderHeading.Text = view switch { 0 => "Favorites", 1 => "Recently added", 2 => "Listening history", _ => "Inbox · Needs review" };
+        FolderSummary.Text = inbox?.Message ?? $"{tracks.Count} entries loaded · newest first · files stay in their folders";
         Breadcrumb.Text = "Library / " + FolderHeading.Text; PlayFolderButton.Content = "▶ Play " + FolderHeading.Text.ToLowerInvariant(); PlayFolderButton.IsEnabled = tracks.Count > 0;
-        EmptyState.Text = view switch { 0 => "Use ♥ on a track you enjoy, or select tracks and press Ctrl+D.", 1 => "Add a music folder to see your collection.", _ => "Tracks appear here when playback starts successfully." };
+        EmptyState.Text = view switch { 0 => "Use ♥ on a track you enjoy, or select tracks and press Ctrl+D.", 1 => "Add a music folder to see your collection.", 2 => "Tracks appear here when playback starts successfully.", _ => "No new files need review. Browse a folder and choose Folder options → Use as Inbox. Only new files directly in that folder are included. Playback and your files stay unchanged." };
         EmptyState.Visibility = tracks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         MoreButton.Visibility = tracks.Count == 500 ? Visibility.Visible : Visibility.Collapsed;
         BackButton.IsEnabled = history.Count > 0; ForwardButton.IsEnabled = forward.Count > 0; UpdateSelectedFavorite();
@@ -45,7 +47,7 @@ public partial class MainWindow
             if (closed || version != navigationVersion) return;
             foreach (var row in result.Tracks) tracks.Add(row);
             MoreButton.Visibility = result.Tracks.Count == 500 ? Visibility.Visible : Visibility.Collapsed;
-            FolderSummary.Text = $"{tracks.Count} entries loaded · newest first · files stay in their folders";
+            if (view != 3) FolderSummary.Text = $"{tracks.Count} entries loaded · newest first · files stay in their folders";
         }
         catch (Exception e) { Error(e); }
         finally { if (!closed) MoreButton.IsEnabled = true; }

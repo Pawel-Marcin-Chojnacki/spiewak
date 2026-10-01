@@ -13,12 +13,13 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 - Local UTF-8 M3U8 import/export and file/folder/playlist drops to queue; external file references do not create synthetic folders or scan neighboring music.
 - Manual metadata/filename/front-cover proposals, explicit preview/apply/cancel, durable originals, file change history, verified Undo and explicit interrupted-write recovery. See METADATA.md.
 - Reviewed MusicBrainz recording/release search, automatic Cover Art Archive front-cover download for a selected candidate, preserved local tags/artwork and provider provenance through the existing preview/Apply/Undo path. See DISCOVERY.md.
+- Configured direct-folder Inbox for new stable files, Needs Review list, existing explicit metadata actions and persisted review acknowledgement; no automatic provider requests or file writes.
 - Favorites, first-indexed/recently-added view and successful-playback-start history; persistent app state and unavailable snapshots.
 - Cached startup before background reconciliation; rescan external additions/renames/deletions without changing music.
 
 ## Verification
 
-- Rust: fifty-four unit/integration tests; fmt and clippy with warnings denied.
+- Rust: sixty-four unit/integration tests; fmt and clippy with warnings denied.
 - Release WinUI build on ARM64; native shell visually inspected in actual VM screenshots.
 - C# ↔ Rust smoke: Unicode paths, actual WAV metadata/tags, folder fidelity, IDs across rescan/restart, external rename/delete, SHA-256 music preservation.
 - Codec integration: generated MP3, FLAC, AAC/M4A, ALAC, Ogg Vorbis and WAV fixtures all index, decode/play and seek successfully on Windows ARM64. Corrupt audio returns an error while previous audio/queue continue. FFmpeg 9.0.2 installed via winget for fixture generation only.
@@ -155,3 +156,14 @@ Schema 12 / ABI 9 adds opt-in MusicBrainz recording/edition search and bounded C
 Schema 13 / ABI 10 implements local Chromaprint 1.6.1 in the Rust process, bounded streaming decoding, content/identity/version-bound cache and reviewed AcoustID → MusicBrainz candidates. Lookup uses HTTPS POST and an environment-only application key; without that key local calculation sends no network request. Existing folders, local tags/covers, version labels and original-file Apply/Undo remain authoritative. Fifty-eight Rust tests, fmt/clippy, ARM64 release DLL/WinUI build and full native six-codec/WASAPI/metadata/provider regression pass. Official fpcalc reference vectors agree exactly for WAV/FLAC/MP3/ALAC/Ogg and within the documented decoder fixture tolerance for AAC; original bytes remain unchanged. See FINGERPRINT.md.
 
 The owner has no application key yet. Live AcoustID recognition, actual new dialog gestures, configured Inbox, confidence/automatic application, household acceptance and current-feature x64 validation remain open; their completion is not inferred from fixture tests.
+
+
+## Inbox intake milestone
+
+Schema 14 / ABI 11 adds opt-in Inbox configuration for existing real folders, a post-scan baseline excluding existing tracks/subfolders, persistent waiting/reviewed states, and a normal paged Needs Review view with explicit Find tags and cover, Edit tags and Mark reviewed. Checks run on the existing background watcher worker: at least ten seconds of stable size/time/identity, positive readable duration, and no active Windows writer. Failed header/file access retries; no HTTP or source mutation occurs during intake. Source changes invalidate review acknowledgement; completed entries survive restart and temporary unavailability. See smart-inbox.md for direct-folder scope, timing/identity and scale limits.
+
+Sixty-four Rust tests, fmt, clippy with warnings denied, WinUI ARM64 Release and native C# integration pass. Six new Rust tests cover schema 13→14, baseline/repeated enable, growing/corrupt files, Windows writer locks, stale acknowledgement, restart, temporary unavailability and source preservation. C# ↔ Rust tests use the actual Windows watcher and typed ABI for Unicode configuration, writer exclusion, delayed readiness, NTFS rename, review persistence and disable. Full Windows audio/six-codec metadata/fingerprint regression also passes, including uninterrupted unrelated WASAPI playback during Inbox checks.
+
+The demo app was launched in the Windows console session; actual Parallels screenshots show Inbox · Needs review and Inbox folders. Bringing the window forward worked, but single/double click and Enter on Inbox produced hover with no verified navigation. Folder configuration, Needs Review actions and existing provider/edit dialogs remain **UI acceptance gates**, not completed by native tests. Automatic discovery/confidence/application, live AcoustID with the owner's key, x64 current-feature validation, large/network Inbox benchmarks and household review remain open.
+
+VM evidence: `C:\Users\pawel\spiewak-inbox-verified-build.log` (full Rust/WinUI/native checks), `spiewak-inbox-audio.log` (full WASAPI/six-codec regression). Source changes are on the stacked `feature/inbox-review` branch; no default-branch merge.

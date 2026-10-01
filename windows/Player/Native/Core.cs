@@ -39,6 +39,8 @@ internal sealed class CoreHandle : SafeHandleZeroOrMinusOneIsInvalid
 }
 internal static partial class NativeMethods
 {
+    [DllImport("spiewak_core", EntryPoint = "spiewak_inbox", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Inbox(CoreHandle core, long folder, uint action);
+    [DllImport("spiewak_core", EntryPoint = "spiewak_inbox_complete", CallingConvention = CallingConvention.Cdecl)] internal static extern nint CompleteInbox(CoreHandle core, long track, long observed);
     [DllImport("spiewak_core", EntryPoint = "spiewak_listening_tracks", CallingConvention = CallingConvention.Cdecl)] internal static extern nint ListeningTracks(CoreHandle core, uint view, uint offset);
     [DllImport("spiewak_core", EntryPoint = "spiewak_favorites", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Favorites(CoreHandle core, [In] long[] ids, nuint count, uint favorite);
     [DllImport("spiewak_core", EntryPoint = "spiewak_play_listening", CallingConvention = CallingConvention.Cdecl)] internal static extern nint PlayListening(CoreHandle core, uint view, uint index);
@@ -98,7 +100,7 @@ public sealed partial class Core : IDisposable
     [StructLayout(LayoutKind.Sequential)] private struct PlaylistRow { public long Id; public nint Name; public ulong Count; }
     public Core(string databasePath)
     {
-        if (NativeMethods.Version() != 10 || Marshal.SizeOf<FolderRow>() != 64 || Marshal.SizeOf<TrackRow>() != 104 || Marshal.SizeOf<Header>() != 112 || Marshal.SizeOf<DiscoveryHeader>() != 56 || Marshal.SizeOf<CandidateRow>() != 112 || Marshal.SizeOf<MetadataHeader>() != 24 || Marshal.SizeOf<MetadataRow>() != 72 || Marshal.SizeOf<NativeMethods.MetadataFieldRow>() != 16)
+        if (NativeMethods.Version() != 11 || Marshal.SizeOf<FolderRow>() != 64 || Marshal.SizeOf<TrackRow>() != 104 || Marshal.SizeOf<Header>() != 112 || Marshal.SizeOf<DiscoveryHeader>() != 56 || Marshal.SizeOf<CandidateRow>() != 112 || Marshal.SizeOf<MetadataHeader>() != 24 || Marshal.SizeOf<MetadataRow>() != 72 || Marshal.SizeOf<NativeMethods.MetadataFieldRow>() != 16)
             throw new InvalidOperationException("The native core has an incompatible ABI. Rebuild the application.");
         handle = new CoreHandle(NativeMethods.Open(databasePath));
         if (handle.IsInvalid) throw new IOException($"Cannot open the library at {databasePath}: {Text(NativeMethods.OpenError())}");
@@ -148,6 +150,9 @@ public sealed partial class Core : IDisposable
     public Result PlayPlaylist(long id, uint index) => Checked(NativeMethods.PlayPlaylist(handle, id, index));
     public Result PlaylistCommand(long id, uint command, string name = "", IEnumerable<Track>? rows = null, uint index = 0) { var ids = rows?.Select(t => t.Id).ToArray() ?? []; return Checked(NativeMethods.PlaylistCommand(handle, id, command, name, ids, (nuint)ids.Length, index)); }
     public Result ListeningTracks(uint view, uint offset = 0) => Checked(NativeMethods.ListeningTracks(handle, view, offset));
+    public Result Inbox() => Checked(NativeMethods.Inbox(handle, 0, 0));
+    public Result SetInbox(long folder, bool enabled) => Checked(NativeMethods.Inbox(handle, folder, enabled ? 1u : 2u));
+    public Result CompleteInbox(Track track) => Checked(NativeMethods.CompleteInbox(handle, track.Id, track.EventTime));
     public Result ListeningState() => Checked(NativeMethods.ListeningState(handle));
     public Result PlayListening(uint view, uint index = 0) => Checked(NativeMethods.PlayListening(handle, view, index));
     public Result Favorites(IEnumerable<Track> tracks, bool favorite) { var ids = tracks.Select(t => t.ReferenceId).Distinct().ToArray(); return Checked(NativeMethods.Favorites(handle, ids, (nuint)ids.Length, favorite ? 1u : 0u)); }

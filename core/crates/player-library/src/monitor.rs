@@ -83,6 +83,7 @@ impl Monitor {
             let mut watch_attempt = Instant::now() - Duration::from_secs(31);
             let mut roots_at = Instant::now() - Duration::from_secs(3);
             let mut periodic_at = Instant::now();
+            let mut inbox_at = Instant::now();
             let mut dirty: Option<(Instant, Instant)> = None;
             while !stopped.load(Ordering::Acquire) {
                 match rx.recv_timeout(Duration::from_millis(200)) {
@@ -122,6 +123,15 @@ impl Monitor {
                         }
                         if let Ok(mut s) = shared.lock() { s.ready = !configured.is_empty() && watched.len() == configured.len(); }
                     }
+                }
+                if inbox_at.elapsed() >= Duration::from_secs(2) && !scanning.swap(true, Ordering::AcqRel) {
+                    let _guard = ScanLock(scanning.clone());
+                    match library.refresh_inbox() {
+                        Ok(true) => publish(&shared, "Inbox updated. New files stay in their folders.".into()),
+                        Ok(false) => {},
+                        Err(e) => publish(&shared, format!("Inbox check failed: {e}. Your music was not changed."))
+                    }
+                    inbox_at = Instant::now();
                 }
                 let due = dirty.is_some_and(|(first,last)|last.elapsed() >= Duration::from_millis(750) || first.elapsed() >= Duration::from_secs(8))
                     || periodic_at.elapsed() >= Duration::from_secs(60);

@@ -27,6 +27,11 @@ var before = SHA256.HashData(File.ReadAllBytes(one));
 var db = Path.Combine(sandbox, "cache", "library.db");
 try
 {
+    if (args.Contains("--inbox-only"))
+    {
+        await InboxChecks(sandbox, args.Contains("--audio"));
+        Console.WriteLine("PASS: targeted native Inbox checks"); return;
+    }
     if (args.Contains("--discovery-only"))
     {
         await DiscoveryChecks(sandbox, args.Contains("--providers"), args.Contains("--audio"));
@@ -163,6 +168,7 @@ try
         await Wait(() => (core.LibraryState().Flags & 1) != 0, "Restored root automatically watched again");
     }
     using (var core = new Core(db)) { Assert(core.Folder(folderId).Folders.Single().Kind == FolderKind.UserCollection, "Folder presentation survives restart"); core.SetFolderKind(folderId, FolderKind.Auto); Assert(core.Folder(folderId).Folders.Single().Kind == FolderKind.LooseTracks, "One remaining tagged song stays a loose track in automatic mode"); Assert(core.Playlists().Playlists.Single().Count == 2, "Playlist survives restart"); core.Rescan(); Assert(core.PlaylistTracks(playlistId).Tracks.Any(t => t.Id == 0), "Unavailable playlist entry remains visible"); Assert(core.Tracks(folderId).Tracks.Count == 1 && core.Tracks(folderId).Tracks[0].Id == trackId, "Cache persists and external delete reconciles after restart"); }
+    await InboxChecks(sandbox, args.Contains("--audio"));
     await ListeningChecks(sandbox, args.Contains("--audio"));
     await PlaylistFileChecks(sandbox, args.Contains("--audio"));
     await SessionChecks(sandbox, dll, args.Contains("--audio"));
@@ -634,4 +640,62 @@ static async Task FingerprintChecks(string sandbox, bool audio, string? ffmpeg)
         Console.WriteLine("Fingerprint: local-only, content-bound cache, "+(ffmpeg is null ? "WAV" : "six codecs")+", exact source hashes and folder policy verified");
     }
     finally { Environment.SetEnvironmentVariable("SPIEWAK_ACOUSTID_CLIENT_KEY",previousKey); }
+}
+
+static async Task InboxChecks(string sandbox, bool audio)
+{
+    var root = Path.Combine(sandbox, "Inbox Żółć"); Directory.CreateDirectory(root);
+    var old = Path.Combine(root, "Existing.wav"); Wave(old, 220);
+    var db = Path.Combine(sandbox, "inbox-cache", "library.db");
+    var path = Path.Combine(root, "New Official Video.wav");
+    byte[] original;
+    long folder;
+    async Task Eventually(Func<bool> condition, string label)
+    {
+        for (var i = 0; i < 200; i++) { if (condition()) { Console.WriteLine("PASS: " + label); return; } await Task.Delay(100); }
+        throw new Exception("FAIL: timeout: " + label);
+    }
+    async Task Configure(Core core, long id, bool enable)
+    {
+        for (var i = 0; ; i++)
+        {
+            try { core.SetInbox(id, enable); return; }
+            catch (InvalidOperationException e) when (i < 100 && e.Message.Contains("operation is running")) { await Task.Delay(100); }
+        }
+    }
+    using (var core = new Core(db))
+    {
+        core.AddRoot(root); folder = core.Folders().Folders.Single().Id;
+        await Configure(core, folder, true);
+        Assert(core.Inbox().Folders.Single().Id == folder && core.ListeningTracks(3).Tracks.Count == 0, "Inbox config through ABI excludes existing collection");
+        if (audio) { core.Command(7); core.Command(8); core.Command(8); core.Play(folder, core.Tracks(folder).Tracks.Single().Id); }
+        Wave(path, 330); original = SHA256.HashData(File.ReadAllBytes(path));
+        var child = Path.Combine(root, "Album"); Directory.CreateDirectory(child); Wave(Path.Combine(child, "Excluded.wav"), 440);
+        using (var writer = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+        {
+            await Eventually(() => core.Tracks(folder).Tracks.Count == 2, "Windows watcher discovers new Inbox file");
+            await Task.Delay(11500);
+            Assert(core.ListeningTracks(3).Tracks.Count == 0, "Active Windows writer prevents early Inbox readiness");
+        }
+        // Blocked headers retry after 30 seconds; change size to reset intake immediately.
+        using (var append = new FileStream(path, FileMode.Append)) append.Write(new byte[16]);
+        original = SHA256.HashData(File.ReadAllBytes(path));
+        await Eventually(() => core.ListeningTracks(3).Tracks.Count == 1, "Stable closed Inbox file becomes Needs Review automatically");
+        var row = core.ListeningTracks(3).Tracks.Single();
+        Assert(row.Path == path && row.Folder == folder, "Inbox retains direct real folder and excludes subfolders");
+        if (audio) Assert(core.Now().Playing, "Background Inbox checks do not stop unrelated WASAPI playback");
+        Assert(core.Discovery().Candidates.Count == 0, "Inbox intake does not create provider candidates");
+        var moved = Path.Combine(root, "Renamed.wav"); File.Move(path, moved); path = moved;
+        await Eventually(() => core.ListeningTracks(3).Tracks.SingleOrDefault()?.Path == moved, "NTFS rename preserves Inbox reference");
+        row = core.ListeningTracks(3).Tracks.Single();
+        core.CompleteInbox(row);
+        Assert(core.ListeningTracks(3).Tracks.Count == 0, "Mark reviewed removes Inbox entry without deleting music");
+        Assert(SHA256.HashData(File.ReadAllBytes(path)).SequenceEqual(original), "Inbox leaves source bytes unchanged");
+    }
+    using (var core = new Core(db))
+    {
+        Assert(core.Inbox().Folders.Single().Id == folder && core.ListeningTracks(3).Tracks.Count == 0, "Inbox configuration and review survive restart");
+        await Configure(core, folder, false);
+        Assert(core.Inbox().Folders.Count == 0 && File.Exists(path), "Disable Inbox preserves files and library");
+    }
 }
