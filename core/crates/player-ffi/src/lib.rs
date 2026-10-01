@@ -225,6 +225,64 @@ pub unsafe extern "C" fn spiewak_tracks(
         Ok(Snapshot::default().tracks(lib.tracks(folder, offset, limit.clamp(1, 1000))?))
     })
 }
+/// # Safety
+/// Live core, valid UTF-8 search string for this call. Results are bounded.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_search(ptr: *mut Core, query: *const c_char) -> *mut Snapshot {
+    guard(|| {
+        let c = unsafe { core(ptr) }?;
+        let (folders, tracks) = c
+            .library
+            .lock()
+            .map_err(|_| "Library unavailable.")?
+            .search(unsafe { text(query) }?)?;
+        Ok(Snapshot::default().folders(folders).tracks(tracks))
+    })
+}
+/// # Safety
+/// Live core. Sort 0 number, 1 title, 2 artist, 3 filename/path, 4/5 duration asc/desc.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_tracks_sorted(
+    ptr: *mut Core,
+    folder: i64,
+    offset: u32,
+    limit: u32,
+    sort: u32,
+) -> *mut Snapshot {
+    guard(|| {
+        let c = unsafe { core(ptr) }?;
+        Ok(Snapshot::default().tracks(
+            c.library
+                .lock()
+                .map_err(|_| "Library unavailable.")?
+                .tracks_sorted(folder, offset, limit.clamp(1, 1000), sort)?,
+        ))
+    })
+}
+/// # Safety
+/// Live core. Queue respects the same sorting as the browsed folder.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_play_view(
+    ptr: *mut Core,
+    folder: i64,
+    track: i64,
+    sort: u32,
+) -> *mut Snapshot {
+    guard(|| {
+        let c = unsafe { core(ptr) }?;
+        let rows = c
+            .library
+            .lock()
+            .map_err(|_| "Library unavailable.")?
+            .tracks_sorted(folder, 0, u32::MAX, sort)?;
+        let index = rows
+            .iter()
+            .position(|t| t.id == track)
+            .ok_or("This track is no longer in the folder.")?;
+        c.audio.command(Command::Replace(rows, index))?;
+        Ok(Snapshot::default())
+    })
+}
 struct ScanGuard<'a>(&'a AtomicBool);
 impl Drop for ScanGuard<'_> {
     fn drop(&mut self) {

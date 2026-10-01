@@ -39,6 +39,10 @@ internal static class NativeMethods
     [DllImport(Dll, EntryPoint = "spiewak_now", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Now(CoreHandle core);
     [DllImport(Dll, EntryPoint = "spiewak_queue", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Queue(CoreHandle core);
     [DllImport(Dll, EntryPoint = "spiewak_selection", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Selection(CoreHandle core, [In] long[] ids, nuint count, uint mode);
+    [DllImport(Dll, EntryPoint = "spiewak_search", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Search(CoreHandle core, [MarshalAs(UnmanagedType.LPUTF8Str)] string query);
+    [DllImport(Dll, EntryPoint = "spiewak_tracks_sorted", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Sorted(CoreHandle core, long folder, uint offset, uint limit, uint sort);
+    [DllImport(Dll, EntryPoint = "spiewak_play_view", CallingConvention = CallingConvention.Cdecl)] internal static extern nint PlayView(CoreHandle core, long folder, long track, uint sort);
+
 }
 public sealed class Core : IDisposable
 {
@@ -91,10 +95,11 @@ public sealed class Core : IDisposable
     private static Result Checked(nint pointer)
     { var result = Read(pointer); if (result.Error.Length > 0) throw new InvalidOperationException(result.Error); return result; }
     public Result Folders(long parent = 0) => Checked(NativeMethods.Folders(handle, parent));
-    public Result Tracks(long folder, uint offset = 0) => Checked(NativeMethods.Tracks(handle, folder, offset, 500));
+    public Result Tracks(long folder, uint offset = 0, uint sort = 0) => Checked(NativeMethods.Sorted(handle, folder, offset, 500, sort));
     public Result AddRoot(string path) => Checked(NativeMethods.AddRoot(handle, path));
     public Result Rescan() => Checked(NativeMethods.Rescan(handle));
-    public Result Play(long folder, long track) => Checked(NativeMethods.Play(handle, folder, track));
+    public Result Play(long folder, long track, uint sort = 0) => Checked(NativeMethods.PlayView(handle, folder, track, sort));
+    public Result Search(string query) => Checked(NativeMethods.Search(handle, query));
     public Result Command(uint command, double value = 0) => Checked(NativeMethods.Command(handle, command, value));
     public Result Now() => Read(NativeMethods.Now(handle));
     public Result Queue() => Checked(NativeMethods.Queue(handle));

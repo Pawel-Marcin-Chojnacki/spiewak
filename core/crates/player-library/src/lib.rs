@@ -107,7 +107,7 @@ impl Library {
         let schema_version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if schema_version > 1 {
+        if schema_version > 2 {
             return Err("This library cache belongs to a newer version of Spiewak. Update the app before opening it.".into());
         }
         db.busy_timeout(std::time::Duration::from_secs(10))
@@ -118,7 +118,25 @@ impl Library {
             CREATE INDEX IF NOT EXISTS folders_parent ON folders(parent_id);
             CREATE TABLE IF NOT EXISTS tracks(id INTEGER PRIMARY KEY,folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,path TEXT NOT NULL UNIQUE COLLATE NOCASE,title TEXT NOT NULL,artist TEXT NOT NULL,album TEXT NOT NULL,album_artist TEXT NOT NULL,artwork TEXT NOT NULL,codec TEXT NOT NULL,duration REAL NOT NULL,number INTEGER NOT NULL,year INTEGER NOT NULL,size INTEGER NOT NULL,modified INTEGER NOT NULL,epoch INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS tracks_folder ON tracks(folder_id,number,title);
-            PRAGMA user_version=1;").map_err(|e|e.to_string())?;
+            ").map_err(|e|e.to_string())?;
+        if schema_version < 2 {
+            db.execute_batch("SAVEPOINT migration;
+                CREATE VIRTUAL TABLE IF NOT EXISTS track_search USING fts5(title,artist,album,path,content='tracks',content_rowid='id',tokenize='unicode61 remove_diacritics 2',prefix='2 3');
+                CREATE TRIGGER IF NOT EXISTS track_search_insert AFTER INSERT ON tracks BEGIN INSERT INTO track_search(rowid,title,artist,album,path) VALUES(new.id,new.title,new.artist,new.album,new.path); END;
+                CREATE TRIGGER IF NOT EXISTS track_search_delete AFTER DELETE ON tracks BEGIN INSERT INTO track_search(track_search,rowid,title,artist,album,path) VALUES('delete',old.id,old.title,old.artist,old.album,old.path); END;
+                CREATE TRIGGER IF NOT EXISTS track_search_update AFTER UPDATE OF title,artist,album,path ON tracks BEGIN
+                    INSERT INTO track_search(track_search,rowid,title,artist,album,path) VALUES('delete',old.id,old.title,old.artist,old.album,old.path);
+                    INSERT INTO track_search(rowid,title,artist,album,path) VALUES(new.id,new.title,new.artist,new.album,new.path); END;
+                CREATE VIRTUAL TABLE IF NOT EXISTS folder_search USING fts5(name,path,content='folders',content_rowid='id',tokenize='unicode61 remove_diacritics 2',prefix='2 3');
+                CREATE TRIGGER IF NOT EXISTS folder_search_insert AFTER INSERT ON folders BEGIN INSERT INTO folder_search(rowid,name,path) VALUES(new.id,new.name,new.path); END;
+                CREATE TRIGGER IF NOT EXISTS folder_search_delete AFTER DELETE ON folders BEGIN INSERT INTO folder_search(folder_search,rowid,name,path) VALUES('delete',old.id,old.name,old.path); END;
+                CREATE TRIGGER IF NOT EXISTS folder_search_update AFTER UPDATE OF name,path ON folders WHEN old.name!=new.name OR old.path!=new.path BEGIN
+                    INSERT INTO folder_search(folder_search,rowid,name,path) VALUES('delete',old.id,old.name,old.path);
+                    INSERT INTO folder_search(rowid,name,path) VALUES(new.id,new.name,new.path); END;
+                INSERT INTO track_search(track_search) VALUES('rebuild');
+                INSERT INTO folder_search(folder_search) VALUES('rebuild');
+                PRAGMA user_version=2; RELEASE migration;").map_err(|e|e.to_string())?;
+        }
         Ok(Self { db })
     }
     pub fn roots(&self) -> Result<Vec<String>> {
@@ -328,11 +346,68 @@ impl Library {
         .map_err(|e| e.to_string())
     }
     pub fn tracks(&self, folder: i64, offset: u32, limit: u32) -> Result<Vec<Track>> {
-        let mut stmt=self.db.prepare("SELECT id,folder_id,path,title,artist,album,album_artist,artwork,codec,duration,number,year FROM tracks WHERE folder_id=? ORDER BY number,title COLLATE NOCASE,id LIMIT ? OFFSET ?").map_err(|e|e.to_string())?;
+        self.tracks_sorted(folder, offset, limit, 0)
+    }
+    pub fn tracks_sorted(
+        &self,
+        folder: i64,
+        offset: u32,
+        limit: u32,
+        sort: u32,
+    ) -> Result<Vec<Track>> {
+        let order = match sort {
+            0 => "number,title COLLATE NOCASE,id",
+            1 => "title COLLATE NOCASE,id",
+            2 => "artist COLLATE NOCASE,title COLLATE NOCASE,id",
+            3 => "path COLLATE NOCASE,id",
+            4 => "duration,id",
+            5 => "duration DESC,id",
+            _ => return Err("Unknown track sort order.".into()),
+        };
+        let sql = format!(
+            "SELECT id,folder_id,path,title,artist,album,album_artist,artwork,codec,duration,number,year FROM tracks WHERE folder_id=? ORDER BY {order} LIMIT ? OFFSET ?"
+        );
+        let mut stmt = self.db.prepare(&sql).map_err(|e| e.to_string())?;
         stmt.query_map(params![folder, limit, offset], track_row)
             .map_err(|e| e.to_string())?
             .collect::<std::result::Result<_, _>>()
             .map_err(|e| e.to_string())
+    }
+    pub fn search(&self, input: &str) -> Result<(Vec<Folder>, Vec<Track>)> {
+        if input.len() > 1024 {
+            return Err("Search text is too long.".into());
+        }
+        let query = input
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .take(8)
+            .map(|w| format!("\"{w}\"*"))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        if query.is_empty() {
+            return Ok((vec![], vec![]));
+        }
+        let mut stmt=self.db.prepare("SELECT t.id,t.folder_id,t.path,t.title,t.artist,t.album,t.album_artist,t.artwork,t.codec,t.duration,t.number,t.year FROM track_search JOIN tracks t ON t.id=track_search.rowid WHERE track_search MATCH ? ORDER BY rank LIMIT 200").map_err(|e|e.to_string())?;
+        let tracks = stmt
+            .query_map([&query], track_row)
+            .map_err(|e| e.to_string())?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        let mut stmt=self.db.prepare("SELECT f.id,coalesce(f.parent_id,0),f.name,f.path,EXISTS(SELECT 1 FROM folders c WHERE c.parent_id=f.id) FROM folder_search JOIN folders f ON f.id=folder_search.rowid WHERE folder_search MATCH ? ORDER BY rank LIMIT 30").map_err(|e|e.to_string())?;
+        let folders = stmt
+            .query_map([&query], |row| {
+                Ok(Folder {
+                    id: row.get(0)?,
+                    parent_id: row.get(1)?,
+                    name: row.get(2)?,
+                    path: row.get(3)?,
+                    has_children: row.get(4)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        Ok((folders, tracks))
     }
     pub fn folder_queue(&self, folder: i64, start: i64) -> Result<(Vec<Track>, usize)> {
         let tracks = self.tracks(folder, 0, u32::MAX)?;
@@ -444,6 +519,32 @@ mod tests {
         fs::rename(&root, p.join("Offline")).unwrap();
         assert!(!lib.reconcile().unwrap().warnings.is_empty());
         assert_eq!(lib.tracks(folder, 0, 500).unwrap().len(), 1);
+        drop(lib);
+        fs::remove_dir_all(p).unwrap();
+    }
+    #[test]
+    fn search_unicode_prefixes_and_external_changes_are_indexed() {
+        let p = sandbox();
+        let root = p.join("Śpiewak");
+        fs::create_dir(&root).unwrap();
+        wav(&root.join("Zebra.wav"));
+        wav(&root.join("Alpha.wav"));
+        let lib = Library::open(&p.join("index.db")).unwrap();
+        lib.add_root(&root).unwrap();
+        let folder = lib.folders(0).unwrap()[0].id;
+        assert_eq!(lib.search("ŚPIE").unwrap().1.len(), 2);
+        assert_eq!(lib.search("alp").unwrap().1[0].title, "Alpha");
+        assert!(lib.search(r#"" OR *"#).unwrap().1.is_empty());
+        assert_eq!(
+            lib.tracks_sorted(folder, 0, 500, 1).unwrap()[0].title,
+            "Alpha"
+        );
+        fs::remove_file(root.join("Alpha.wav")).unwrap();
+        lib.reconcile().unwrap();
+        assert!(lib.search("alp").unwrap().1.is_empty());
+        drop(lib);
+        let lib = Library::open(&p.join("index.db")).unwrap();
+        assert_eq!(lib.search("zeb").unwrap().1.len(), 1);
         drop(lib);
         fs::remove_dir_all(p).unwrap();
     }

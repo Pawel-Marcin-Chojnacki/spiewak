@@ -26,6 +26,9 @@ try
         Assert(tracks[0].Duration > 7.9 && tracks[0].Duration < 8.1, "Actual WAV metadata duration");
         Console.WriteLine($"Metadata: title={tracks[0].Title}; artist={tracks[0].Artist}; album={tracks[0].Album}");
         Assert(tracks[0].Title == "Morning" && tracks[0].Artist == "Spiewak Sessions" && tracks[0].Album == "Field Notes", "Metadata tags enrich, never reparent folders");
+        Assert(core.Search("morn").Tracks.Single().Id == tracks[0].Id, "Prefix search through typed ABI");
+        Assert(core.Search("ŚPIE").Tracks.Count == 2, "Unicode path search");
+        Assert(core.Tracks(folderId, 0, 1).Tracks[0].Title == "Evening", "Native title sort");
         trackId = tracks[0].Id;
         core.Selection(tracks, 1); await Wait(() => core.Queue().Tracks.Count == 2, "Append selection without auto-playing");
         Assert(!core.Now().Playing, "Queue additions do not start audio");
@@ -84,6 +87,7 @@ try
         core.Rescan(); Assert(core.Tracks(folderId).Tracks[0].Id == trackId, "IDs survive unchanged reconciliation");
         Assert(before.SequenceEqual(SHA256.HashData(File.ReadAllBytes(one))), "Scanner does not change music bytes");
         var moved = Path.Combine(album, "03 - Renamed.wav"); File.Move(two, moved); core.Rescan(); Assert(core.Tracks(folderId).Tracks.Count == 2, "External rename reconciles");
+        Assert(core.Search("renam").Tracks.Count == 1, "Renamed filename updates FTS");
         File.Delete(moved);
     }
     using (var core = new Core(db)) { core.Rescan(); Assert(core.Tracks(folderId).Tracks.Count == 1 && core.Tracks(folderId).Tracks[0].Id == trackId, "Cache persists and external delete reconciles after restart"); }

@@ -31,6 +31,9 @@ SpiewakSnapshot *spiewak_queue(SpiewakCore *);
 // Selection mode: 0 play, 1 append, 2 play next. Queue command indexes are zero-based.
 SpiewakSnapshot* spiewak_selection(SpiewakCore*, const int64_t* ids, size_t count, uint32_t mode);
 
+SpiewakSnapshot *spiewak_search(SpiewakCore *, const char *query);
+SpiewakSnapshot *spiewak_tracks_sorted(SpiewakCore *, int64_t folder, uint32_t offset, uint32_t limit, uint32_t sort);
+SpiewakSnapshot *spiewak_play_view(SpiewakCore *, int64_t folder, int64_t track, uint32_t sort);
 #ifdef __cplusplus
 }
 #endif

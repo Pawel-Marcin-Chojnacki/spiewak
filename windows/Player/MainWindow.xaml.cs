@@ -33,9 +33,9 @@ public partial class MainWindow : Window
         if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
         { presenter.PreferredMinimumWidth = 1060; presenter.PreferredMinimumHeight = 640; }
         TrackList.ItemsSource = tracks; QueueList.ItemsSource = queue;
-        timer.Tick += PollPlayback;
+        timer.Tick += PollPlayback; searchTimer.Tick += async (_, _) => { searchTimer.Stop(); await RunSearch(); };
         seekTimer.Tick += async (_, _) => { seekTimer.Stop(); var value = pendingSeek; if (value is not null) await Command(5, value.Value); pendingSeek = null; };
-        Closed += (_, _) => { closed = true; timer.Stop(); seekTimer.Stop(); core?.Dispose(); };
+        Closed += (_, _) => { closed = true; timer.Stop(); seekTimer.Stop(); searchTimer.Stop(); core?.Dispose(); };
     }
     private void Error(Exception error) { if (closed) return; ErrorBar.Message = error.Message; ErrorBar.IsOpen = true; }
     private async void OnLoaded(object sender, RoutedEventArgs args)
@@ -84,11 +84,12 @@ public partial class MainWindow : Window
     private async Task Browse(Folder folder, bool remember)
     {
         if (core is null) return;
+        changingSearch = true; SearchBox.Text = ""; changingSearch = false; searchTimer.Stop();
         var version = ++navigationVersion;
-        var trackTask = Task.Run(() => core.Tracks(folder.Id)); var folderTask = Task.Run(() => core.Folders(folder.Id));
+        var trackTask = Task.Run(() => core.Tracks(folder.Id, 0, sortOrder)); var folderTask = Task.Run(() => core.Folders(folder.Id));
         await Task.WhenAll(trackTask, folderTask);
         if (closed || version != navigationVersion) return;
-        if (remember && currentFolder?.Id != folder.Id) { if (currentFolder is not null) history.Push(currentFolder); }
+        if (remember && currentFolder?.Id != folder.Id) { if (currentFolder is not null) history.Push(currentFolder); forward.Clear(); }
         currentFolder = folder; Breadcrumb.Text = folder.Path; ToolTipService.SetToolTip(Breadcrumb, folder.Path);
         FolderHeading.Text = folder.Name; tracks.Clear(); foreach (var track in trackTask.Result.Tracks) tracks.Add(track);
         ChildFolders.ItemsSource = folderTask.Result.Folders;
@@ -97,7 +98,7 @@ public partial class MainWindow : Window
         EmptyState.Text = folderTask.Result.Folders.Count > 0 ? "Open a subfolder to explore its tracks." : "No supported audio files in this folder.";
         FolderSummary.Text = $"{tracks.Count} tracks in this folder · {folderTask.Result.Folders.Count} subfolders";
         MoreButton.Visibility = tracks.Count == 500 ? Visibility.Visible : Visibility.Collapsed;
-        PlayFolderButton.IsEnabled = tracks.Count > 0; BackButton.IsEnabled = history.Count > 0;
+        PlayFolderButton.IsEnabled = tracks.Count > 0; BackButton.IsEnabled = history.Count > 0; ForwardButton.IsEnabled = forward.Count > 0;
         FolderArt.Source = Image(tracks.FirstOrDefault()?.Artwork, 192);
     }
     private async void ChildFolderClicked(object sender, ItemClickEventArgs args) { if (args.ClickedItem is Folder folder) await TryBrowse(folder); }
@@ -105,7 +106,7 @@ public partial class MainWindow : Window
     {
         if (core is null || currentFolder is null) return;
         var folder = currentFolder; var version = navigationVersion; MoreButton.IsEnabled = false;
-        try { var result = await Task.Run(() => core.Tracks(folder.Id, (uint)tracks.Count)); if (closed || version != navigationVersion) return; foreach (var track in result.Tracks) tracks.Add(track); MoreButton.Visibility = result.Tracks.Count == 500 ? Visibility.Visible : Visibility.Collapsed; FolderSummary.Text = $"{tracks.Count} tracks loaded · {folder.Path}"; }
+        try { var result = await Task.Run(() => core.Tracks(folder.Id, (uint)tracks.Count, sortOrder)); if (closed || version != navigationVersion) return; foreach (var track in result.Tracks) tracks.Add(track); MoreButton.Visibility = result.Tracks.Count == 500 ? Visibility.Visible : Visibility.Collapsed; FolderSummary.Text = $"{tracks.Count} tracks loaded · {folder.Path}"; }
         catch (Exception e) { Error(e); }
         finally { MoreButton.IsEnabled = true; }
     }
@@ -134,7 +135,7 @@ public partial class MainWindow : Window
     }
     private async void Rescan(object sender, RoutedEventArgs args) => await Scan(null);
     private async Task Play(Track track)
-    { if (core is null) return; try { await Task.Run(() => core.Play(track.Folder, track.Id)); } catch (Exception e) { Error(e); } }
+    { if (core is null) return; var search = SearchBox.Text.Trim().Length > 0; var sort = sortOrder; try { await Task.Run(() => search ? core.Selection(new[] { track }, 0) : core.Play(track.Folder, track.Id, sort)); } catch (Exception e) { Error(e); } }
     private async void TrackDoubleTapped(object sender, DoubleTappedRoutedEventArgs args) { if (TrackList.SelectedItem is Track track) await Play(track); }
     private async void PlaySelected(object sender, RoutedEventArgs args) => await Selection(0);
     private async void AddNext(object sender, RoutedEventArgs args) => await Selection(2);
@@ -163,7 +164,7 @@ public partial class MainWindow : Window
     private async void Stop(object sender, RoutedEventArgs args) => await Command(2);
     private async void Next(object sender, RoutedEventArgs args) => await Command(3);
     private async void Previous(object sender, RoutedEventArgs args) => await Command(4);
-    private async void ToggleShortcut(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; await Command(1); }
+    private async void ToggleShortcut(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { if (FocusManager.GetFocusedElement(Shell.XamlRoot) is TextBox) return; args.Handled = true; await Command(1); }
     private async void TrackKeyDown(object sender, KeyRoutedEventArgs args) { if (args.Key == VirtualKey.Enter && TrackList.SelectedItem is Track track) { args.Handled = true; await Play(track); } }
     private void TrackSelectionChanged(object sender, SelectionChangedEventArgs args)
     { if (TrackList.SelectedItem is Track track) { InspectorPath.Text = track.Path; InspectorAlbum.Text = $"{track.Album}\n{track.Codec} · {track.Time}"; } }
@@ -172,7 +173,7 @@ public partial class MainWindow : Window
     private async void GoBack(object sender, RoutedEventArgs args) => await Back();
     private async void BackShortcut(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; await Back(); }
     private async Task Back()
-    { if (history.Count == 0) return; var folder = history.Pop(); if (folder is not null) { try { await Browse(folder, false); } catch (Exception e) { Error(e); } } BackButton.IsEnabled = history.Count > 0; }
+    { if (history.Count == 0) return; if (currentFolder is not null) forward.Push(currentFolder); var folder = history.Pop(); if (folder is not null) { try { await Browse(folder, false); } catch (Exception e) { Error(e); } } BackButton.IsEnabled = history.Count > 0; ForwardButton.IsEnabled = forward.Count > 0; }
     private async void PollPlayback(object? sender, object args)
     {
         if (core is null || polling || closed) return; polling = true;

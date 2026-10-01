@@ -11,3 +11,5 @@ Playback is independent of navigation/scanning. FFI library reads use one locked
 Interoptopus was evaluated for the foundation. Manual DTO declarations keep this small API inspectable and avoid generator machinery; revisit generated bindings as the public API grows.
 
 Playback flags: bit 0 mute; bits 1–2 repeat (0 off, 1 queue, 2 track). Selection accepts a bounded i64 ID array; all IDs resolve before audio/queue mutation. Commands 7 mute, 8 cycle repeat, 9 shuffle upcoming, 10 remove, 11/12 move, 13 clear upcoming, 14 jump within existing queue. Queue item indexes distinguish duplicate tracks.
+
+Search and sorted folder APIs return existing owned snapshots. Sort is a validated enum; play_view constructs the whole folder queue in that same order. The UI never sends SQL.
