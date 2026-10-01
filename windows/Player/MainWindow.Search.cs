@@ -26,6 +26,7 @@ public partial class MainWindow
             currentPlaylist = 0; PlaylistTools.Visibility = Visibility.Collapsed; SortBox.Visibility = Visibility.Visible;
             tracks.Clear(); foreach (var track in result.Tracks) tracks.Add(track);
             ChildFolders.ItemsSource = result.Folders; ChildFolders.Visibility = result.Folders.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            FolderViewButton.Visibility = Visibility.Collapsed; SetFolderArtwork(false);
             FolderHeading.Text = "Search results"; FolderSummary.Text = $"{tracks.Count} tracks · {result.Folders.Count} folders · matching ‘{query}’";
             Breadcrumb.Text = "All library folders"; FolderArt.Source = null; PlayFolderButton.IsEnabled = tracks.Count > 0;
             MoreButton.Visibility = Visibility.Collapsed; EmptyState.Text = "No matches. Try a title, artist, album or filename."; EmptyState.Visibility = tracks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;

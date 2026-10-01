@@ -10,3 +10,5 @@ Native Windows folder-first music player. The supplied plan is in docs/master-pl
 - Never change music files during indexing. Keep app data in LocalApplicationData/Spiewak.
 - Validate Rust tests, fmt and clippy; build and run the WinUI app on Windows.
 - Keep docs/STATUS.md honest about implemented and unverified requirements.
+
+- Read docs/household-requirements.md before changing folder/home presentation or metadata automation. Real folders remain canonical; single tagged songs must not become prominent artificial albums.

@@ -89,6 +89,9 @@ public partial class MainWindow : Window
         currentPlaylist = 0; PlaylistTools.Visibility = Visibility.Collapsed; SortBox.Visibility = Visibility.Visible;
         changingSearch = true; SearchBox.Text = ""; changingSearch = false; searchTimer.Stop();
         var version = ++navigationVersion;
+        var latest = await Task.Run(() => core.Folder(folder.Id));
+        if (closed || version != navigationVersion) return;
+        folder = latest.Folders.FirstOrDefault() ?? throw new IOException("This folder is no longer in the library.");
         var trackTask = Task.Run(() => core.Tracks(folder.Id, 0, sortOrder)); var folderTask = Task.Run(() => core.Folders(folder.Id));
         await Task.WhenAll(trackTask, folderTask);
         if (closed || version != navigationVersion) return;
@@ -99,10 +102,13 @@ public partial class MainWindow : Window
         ChildFolders.Visibility = folderTask.Result.Folders.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         EmptyState.Visibility = tracks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         EmptyState.Text = folderTask.Result.Folders.Count > 0 ? "Open a subfolder to explore its tracks." : "No supported audio files in this folder.";
-        FolderSummary.Text = $"{tracks.Count} tracks in this folder · {folderTask.Result.Folders.Count} subfolders";
+        FolderSummary.Text = $"{folder.KindLabel} · {folder.TrackCount} tracks · {folderTask.Result.Folders.Count} subfolders";
+        FolderViewButton.Visibility = Visibility.Visible; FolderViewButton.Content = folder.KindLabel;
+        ToolTipService.SetToolTip(FolderViewButton, folder.OverrideKind == FolderKind.Auto ? "Automatic presentation · change only how this folder appears" : "Your chosen presentation · files stay in this folder");
+        SetFolderArtwork(folder.AlbumPresentation);
         MoreButton.Visibility = tracks.Count == 500 ? Visibility.Visible : Visibility.Collapsed;
         PlayFolderButton.IsEnabled = tracks.Count > 0; BackButton.IsEnabled = history.Count > 0; ForwardButton.IsEnabled = forward.Count > 0;
-        FolderArt.Source = Image(tracks.FirstOrDefault()?.Artwork, 192);
+        FolderArt.Source = folder.AlbumPresentation ? Image(tracks.FirstOrDefault()?.Artwork, 192) : null;
     }
     private async void ChildFolderClicked(object sender, ItemClickEventArgs args) { if (args.ClickedItem is Folder folder) await TryBrowse(folder); }
     private async void LoadMore(object sender, RoutedEventArgs args)

@@ -2,9 +2,13 @@ using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 namespace Spiewak.Native;
 
-public sealed record Folder(long Id, long Parent, string Name, string Path, bool HasChildren)
+public enum FolderKind : uint { Auto, Album, Artist, LooseTracks, MixedCollection, Compilation, UserCollection }
+public sealed record Folder(long Id, long Parent, string Name, string Path, bool HasChildren, FolderKind Kind, ulong TrackCount, FolderKind OverrideKind)
 {
     public override string ToString() => Name;
+    public string KindLabel => Kind switch { FolderKind.Album => "Album folder", FolderKind.Artist => "Artist folder", FolderKind.LooseTracks => "Loose tracks", FolderKind.MixedCollection => "Mixed folder", FolderKind.Compilation => "Compilation folder", _ => "Folder collection" };
+    public string Summary => TrackCount > 0 ? $"{KindLabel} · {TrackCount} tracks" : $"{KindLabel} · {(HasChildren ? "subfolders" : "empty")}";
+    public bool AlbumPresentation => Kind is FolderKind.Album or FolderKind.Compilation;
 }
 public sealed class Track(long id, long folder, string title, string artist, string album, string path,
     string artwork, string codec, double duration, uint number, uint year)
@@ -39,6 +43,7 @@ internal static class NativeMethods
     [DllImport(Dll, EntryPoint = "spiewak_library_state", CallingConvention = CallingConvention.Cdecl)] internal static extern nint LibraryState(CoreHandle core);
     [DllImport(Dll, EntryPoint = "spiewak_folder", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Folder(CoreHandle core, long id);
     [DllImport(Dll, EntryPoint = "spiewak_refresh_queue", CallingConvention = CallingConvention.Cdecl)] internal static extern nint RefreshQueue(CoreHandle core);
+    [DllImport(Dll, EntryPoint = "spiewak_folder_kind", CallingConvention = CallingConvention.Cdecl)] internal static extern nint FolderKind(CoreHandle core, long id, uint kind);
     [DllImport(Dll, EntryPoint = "spiewak_tracks", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Tracks(CoreHandle core, long folder, uint offset, uint limit);
     [DllImport(Dll, EntryPoint = "spiewak_add_root", CallingConvention = CallingConvention.Cdecl)] internal static extern nint AddRoot(CoreHandle core, [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
     [DllImport(Dll, EntryPoint = "spiewak_rescan", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Rescan(CoreHandle core);
@@ -69,7 +74,7 @@ public sealed class Core : IDisposable
     }
     [StructLayout(LayoutKind.Sequential)]
     private struct FolderRow
-    { public long Id, Parent; public nint Name, Path; public uint HasChildren; }
+    { public long Id, Parent; public nint Name, Path; public uint HasChildren, Kind; public ulong TrackCount; public uint OverrideKind; }
     [StructLayout(LayoutKind.Sequential)]
     private struct TrackRow
     {
@@ -79,7 +84,7 @@ public sealed class Core : IDisposable
     [StructLayout(LayoutKind.Sequential)] private struct PlaylistRow { public long Id; public nint Name; public ulong Count; }
     public Core(string databasePath)
     {
-        if (NativeMethods.Version() != 3 || Marshal.SizeOf<FolderRow>() != 40 || Marshal.SizeOf<TrackRow>() != 80 || Marshal.SizeOf<Header>() != 112)
+        if (NativeMethods.Version() != 4 || Marshal.SizeOf<FolderRow>() != 56 || Marshal.SizeOf<TrackRow>() != 80 || Marshal.SizeOf<Header>() != 112)
             throw new InvalidOperationException("The native core has an incompatible ABI. Rebuild the application.");
         handle = new CoreHandle(NativeMethods.Open(databasePath));
         if (handle.IsInvalid) throw new IOException($"Cannot open the library cache at {databasePath}. Check folder permissions.");
@@ -95,7 +100,7 @@ public sealed class Core : IDisposable
             for (nuint i = 0; i < header.FolderCount; i++)
             {
                 var row = Marshal.PtrToStructure<FolderRow>(header.Folders + checked((nint)i * Marshal.SizeOf<FolderRow>()));
-                folders.Add(new(row.Id, row.Parent, Text(row.Name), Text(row.Path), row.HasChildren != 0));
+                folders.Add(new(row.Id, row.Parent, Text(row.Name), Text(row.Path), row.HasChildren != 0, (FolderKind)row.Kind, row.TrackCount, (FolderKind)row.OverrideKind));
             }
             for (nuint i = 0; i < header.TrackCount; i++)
             {
@@ -112,6 +117,7 @@ public sealed class Core : IDisposable
     { var result = Read(pointer); if (result.Error.Length > 0) throw new InvalidOperationException(result.Error); return result; }
     public Result Folders(long parent = 0) => Checked(NativeMethods.Folders(handle, parent));
     public Result Tracks(long folder, uint offset = 0, uint sort = 0) => Checked(NativeMethods.Sorted(handle, folder, offset, 500, sort));
+    public Result SetFolderKind(long id, FolderKind kind) => Checked(NativeMethods.FolderKind(handle, id, (uint)kind));
     public Result LibraryState() => Checked(NativeMethods.LibraryState(handle));
     public Result Folder(long id) => Checked(NativeMethods.Folder(handle, id));
     public Result RefreshQueue() => Checked(NativeMethods.RefreshQueue(handle));

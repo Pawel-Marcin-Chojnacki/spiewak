@@ -25,6 +25,9 @@ pub struct FolderDto {
     name: *const c_char,
     path: *const c_char,
     has_children: u32,
+    kind: u32,
+    track_count: u64,
+    override_kind: u32,
 }
 #[repr(C)]
 pub struct TrackDto {
@@ -110,6 +113,9 @@ impl Snapshot {
                 name,
                 path,
                 has_children: u32::from(f.has_children),
+                kind: f.kind as u32,
+                track_count: f.track_count,
+                override_kind: f.override_kind as u32,
             });
         }
         self.folder_count = self.folder_rows.len();
@@ -185,7 +191,7 @@ unsafe fn text<'a>(ptr: *const c_char) -> Result<&'a str, String> {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn spiewak_abi_version() -> u32 {
-    3
+    4
 }
 /// # Safety
 /// `path` must point to a valid NUL-terminated UTF-8 database path during this call.
@@ -596,13 +602,28 @@ pub unsafe extern "C" fn spiewak_refresh_queue(ptr: *mut Core) -> *mut Snapshot 
     })
 }
 
+/// # Safety
+/// `ptr` must be live. Only changes presentation in the app cache, never music files.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_folder_kind(ptr: *mut Core, id: i64, kind: u32) -> *mut Snapshot {
+    guard(|| {
+        let c = unsafe { core(ptr)? };
+        let folder = c
+            .library
+            .lock()
+            .map_err(|e| e.to_string())?
+            .set_folder_kind(id, kind)?;
+        c.monitor.notice("Folder presentation updated.");
+        Ok(Snapshot::default().folders(vec![folder]))
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn snapshot_layout_and_utf8_ownership() {
-        assert_eq!(spiewak_abi_version(), 3);
-        assert_eq!(std::mem::size_of::<FolderDto>(), 40);
+        assert_eq!(spiewak_abi_version(), 4);
+        assert_eq!(std::mem::size_of::<FolderDto>(), 56);
         assert_eq!(std::mem::size_of::<TrackDto>(), 80);
         let s = Snapshot::default().tracks(vec![Track {
             title: "Śpiewak 🎵".into(),

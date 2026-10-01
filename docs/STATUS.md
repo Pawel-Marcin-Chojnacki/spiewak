@@ -14,7 +14,7 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 
 ## Verification
 
-- Rust: twelve unit/integration tests; fmt and clippy with warnings denied.
+- Rust: fifteen unit/integration tests; fmt and clippy with warnings denied.
 - Release WinUI build on ARM64; native shell visually inspected in actual VM screenshots.
 - C# ↔ Rust smoke: Unicode paths, actual WAV metadata/tags, folder fidelity, IDs across rescan/restart, external rename/delete, SHA-256 music preservation.
 - Codec integration: generated MP3, FLAC, AAC/M4A, ALAC, Ogg Vorbis and WAV fixtures all index, decode/play and seek successfully on Windows ARM64. Corrupt audio returns an error while previous audio/queue continue. FFmpeg 9.0.2 installed via winget for fixture generation only.
@@ -24,7 +24,7 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 ## Current limits / next work
 
 - No Opus decoder in pinned Rodio/Symphonia graph. Files are indexed but playback reports an error.
-- Native watcher and stable IDs within one root/volume are implemented. Reconciliation still walks roots in batches; per-event incremental updates, cross-root/cross-volume identity and network performance are open. No album classification or derived album/artist catalog.
+- Native watcher and stable IDs within one root/volume are implemented. Reconciliation still walks roots in batches; per-event incremental updates, cross-root/cross-volume identity and network performance are open. Conservative folder presentation is implemented; a derived album/artist catalog remains open.
 - No embedded-artwork extraction/cache, tag editing, Smart Inbox, provider integrations or Undo. All file mutation is absent/disabled.
 - No gapless guarantee, ReplayGain, output-device selector or global media keys. Mute is implemented.
 - Mixed queues, selection append/play-next, upcoming edits/clear, queue jump, shuffle upcoming, repeat off/queue/track and mute are implemented. Restart queue persistence remains open.
@@ -66,7 +66,7 @@ SQLite schema 3 stores ordered playlists, including duplicate occurrences. Creat
 
 ## Product research
 
-Source-linked research of ten player references, praise and friction from public user discussions, implementation priorities and acceptance scenarios is in research/music-players-2026-10-01.md. Household user requirements are pending the owner’s details. Final UI/UX work should preserve the semantic theme boundary and validate these actual workflows.
+Source-linked research of ten player references, praise and friction from public user discussions, implementation priorities and acceptance scenarios is in research/music-players-2026-10-01.md. Household requirements are confirmed in household-requirements.md; automatic artwork, metadata and download cleanup are P1 priorities. Final UI/UX work should preserve the semantic theme boundary and validate these actual workflows.
 
 ## Library synchronization milestone
 
@@ -77,3 +77,13 @@ Rust owns a debounced notify 8.2.0 native watcher (750 ms quiet period, 8 s burs
 Twelve Rust tests, fmt/clippy with warnings denied, ARM64 WinUI Release and C# ABI tests pass. Real NTFS creation/deletion/file rename/album rename, hard-link separation, case-only rename, unavailable/restored roots and playlist last-known paths are checked. Windows audio verifies that refreshing a renamed upcoming file preserves playback position and that Next opens its new path. These are native filesystem/core checks; guest UI input workflows remain unverified.
 
 Latest demo build launched successfully in the Windows console session. Additional visual inspection was unavailable because macOS was locked; unlocking it is required for further native UI input checks.
+
+## Folder presentation / household milestone
+
+Confirmed household requirements are recorded in household-requirements.md and linked from AGENTS.md. The owner wants a very simple player respecting directories, quiet presentation of unrelated singles, automatic artwork/tag discovery and cleanup of downloaded MP3s. Audio editing remains unconfirmed. Provider integrations and reversible file mutation are later implementation, not claimed ready.
+
+Schema 6 persists folder presentation overrides. Automatic modes are conservative: Album only for at least two tracks with shared nonempty album/album artist (artist fallback), unique positive track numbers and no child directories; one tagged file remains LooseTracks. Tracks plus subfolders are MixedCollection; empty/container folders are UserCollection. Manual choices additionally include Artist and Compilation; they describe the same existing folder and never create or reparent folders. Override survives rescans, restart and same-root/volume directory rename. Actual album completeness is not certified by this heuristic. Ignore and automatic artist/compilation inference remain open.
+
+ABI 4 extends Folder DTO to 56 bytes (kind, direct track count, override). Snapshot remains 112 bytes. Folder/search results are read in SQLite transactions so metadata decoration uses a coherent snapshot. WinUI displays folder type/count, adds a small presentation menu and hides the large album-art header for loose/mixed/container folders and search/playlists. A separate Home and its side section for singles remain later UI work.
+
+Fifteen Rust tests, fmt/clippy with warnings denied, WinUI Release ARM64 and C# ABI tests verify coherent albums, a single tagged song, persistent overrides, folder rename and unchanged music bytes. The new visual/input state has not yet been inspected because the Mac was locked. Keep this distinct from successful compilation/core testing.

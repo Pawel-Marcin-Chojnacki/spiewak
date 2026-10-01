@@ -110,25 +110,16 @@ Nie utożsamiam aktualnej marki Winamp z klasycznym odtwarzaczem. WACUP rozwija 
 | Globalne media keys / urządzenie | foobar, WACUP, konkretne historie MM | brak | P1: działają poza oknem; zmiana/utrata urządzenia daje czytelny stan |
 | Okładki i prosta informacja | Tauon/Dopamine; przeglądanie MM | lokalna okładka folderu | P1: cache embedded artwork; kontrola rozmiaru; neutralny placeholder |
 | Drag/drop i M3U8 | Tauon/WACUP; przenoszenie bibliotek MusicBee | brak | P1: pliki i foldery z Explorera; eksport/import UTF-8, względne ścieżki, jawne brakujące pliki |
-| Ręczne tagi / bezpieczny Inbox | potrzeby projektu i narzędzia biblioteczne | brak | P1/P2: preview → apply → undo; dostawcy i klucze konfigurowane jawnie |
+| Ręczne tagi / bezpieczny Inbox | potwierdzone wymagania żony i narzędzia biblioteczne | brak | P1: preview → apply → undo; dostawcy i klucze konfigurowane jawnie |
 | Smart playlists | powtarzalne zastosowania MusicBee/MM | brak | P2: mały zestaw zrozumiałych reguł i podgląd wyniku |
 | Teksty / sleep timer / A-B | obecne u konkurencji, zależne od osoby i sposobu słuchania | brak | P2 kandydaci; awans dopiero po potwierdzeniu domowych wymagań |
 | Sonic AI, streaming, serwer, pluginy | Plexamp i duże kombajny | poza zakresem | Zachować non-goals planu; nie rozszerzać produktu z samego podobieństwa do konkurencji |
 
-## Wymagania drugiego domownika
+## Wymagania drugiego domownika — potwierdzone 1 października 2026
 
-Potwierdzone: właściciel prosi uwzględnić wymagania żony. W dostarczonym planie i dostępnej historii projektu nie ma ich osobnej listy; poprosiłem o konkretne uwagi. **Nie zakładamy, że jest początkującą użytkowniczką, używa telefonu, potrzebuje karaoke lub chce automatycznego tagowania.**
+Właściciel przekazał uwagi żony: bardzo prosty odtwarzacz; kolekcja na dysku i jej foldery jako podstawa; pojedyncze utwory pozostają spokojnie prezentowanym zbiorem, bez tworzenia wielkich albumów na Home z każdego tagu. Potwierdzone są także automatyczne okładki, wyszukiwanie tagów i porządkowanie pobranych MP3 z YouTube. Szczegóły oraz scenariusze akceptacji są w [household-requirements.md](../household-requirements.md).
 
-Do uzupełnienia po jej odpowiedzi:
-
-- skąd bierze muzykę i czy słucha albumów, pojedynczych utworów czy playlist;
-- jak rozpoznaje i znajduje nagranie: nazwa, wykonawca, okładka, folder, fragment tekstu;
-- co musi być na wierzchu podczas słuchania;
-- czy komputer i kolejka są wspólne; czy trzeba zachowywać oddzielne ulubione/konteksty;
-- jak chce dodawać nowe pliki i które automatyczne zmiany akceptuje;
-- oczekiwania dotyczące wielkości elementów, klawiatury, tekstów, timerów lub nauki fragmentu.
-
-To nie lista jej wymagań. To pytania do walidacji. Do tego czasu rozwijamy wspólne, odwracalne podstawy odtwarzania i biblioteki.
+To aktualizuje priorytety researchu: rozróżnienie albumowych folderów i luźnych utworów jest P0; poprawny cache okładek i automatyzacja metadanych/Inbox są P1. Nie wyciągamy z tych uwag wniosków o potrzebie karaoke, timerów, mobilnej aplikacji ani osobnych profili. Zakres obróbki audio w słowie „czyszczenie” wymaga jeszcze doprecyzowania.
 
 ## Scenariusze akceptacji przed finalnym UI/UX
 

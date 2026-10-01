@@ -3,10 +3,11 @@ use lofty::{
     file::{AudioFile, TaggedFileExt},
     tag::{Accessor, ItemKey},
 };
-use player_domain::{Folder, Track};
+use player_domain::{Folder, FolderKind, Track};
 mod identity;
 mod monitor;
 mod playlists;
+mod presentation;
 pub use monitor::Monitor;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::{
@@ -112,7 +113,7 @@ impl Library {
         let schema_version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if schema_version > 5 {
+        if schema_version > 6 {
             return Err("This library cache belongs to a newer version of Spiewak. Update the app before opening it.".into());
         }
         db.busy_timeout(std::time::Duration::from_secs(10))
@@ -169,6 +170,11 @@ impl Library {
               PRAGMA user_version=5; RELEASE migration;",
             )
             .map_err(|e| e.to_string())?;
+        }
+        if schema_version < 6 {
+            db.execute_batch("SAVEPOINT migration;
+              ALTER TABLE folders ADD COLUMN presentation INTEGER NOT NULL DEFAULT 0 CHECK(presentation BETWEEN 0 AND 6);
+              PRAGMA user_version=6; RELEASE migration;").map_err(|e|e.to_string())?;
         }
         Ok(Self { db })
     }
@@ -466,7 +472,16 @@ impl Library {
         Ok(())
     }
     pub fn folder(&self, id: i64) -> Result<Option<Folder>> {
-        self.db.query_row("SELECT f.id,coalesce(f.parent_id,0),f.name,f.path,EXISTS(SELECT 1 FROM folders c WHERE c.parent_id=f.id) FROM folders f WHERE f.id=?", [id], |r| Ok(Folder { id:r.get(0)?,parent_id:r.get(1)?,name:r.get(2)?,path:r.get(3)?,has_children:r.get(4)? })).optional().map_err(|e|e.to_string())
+        let tx = self.db.unchecked_transaction().map_err(|e| e.to_string())?;
+        let folder = self.db.query_row("SELECT f.id,coalesce(f.parent_id,0),f.name,f.path,EXISTS(SELECT 1 FROM folders c WHERE c.parent_id=f.id) FROM folders f WHERE f.id=?", [id], folder_row).optional().map_err(|e|e.to_string())?;
+        let result = folder
+            .map(|f| {
+                self.decorate_folders(vec![f])
+                    .map(|mut rows| rows.remove(0))
+            })
+            .transpose()?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(result)
     }
     pub fn selected_tracks(&self, ids: &[i64]) -> Result<Vec<Track>> {
         if ids.is_empty() || ids.len() > 100_000 {
@@ -482,19 +497,17 @@ impl Library {
             .collect()
     }
     pub fn folders(&self, parent: i64) -> Result<Vec<Folder>> {
+        let tx = self.db.unchecked_transaction().map_err(|e| e.to_string())?;
         let mut stmt=self.db.prepare("SELECT f.id,coalesce(f.parent_id,0),f.name,f.path,EXISTS(SELECT 1 FROM folders c WHERE c.parent_id=f.id) FROM folders f WHERE coalesce(f.parent_id,0)=? ORDER BY f.name COLLATE NOCASE").map_err(|e|e.to_string())?;
-        stmt.query_map([parent], |r| {
-            Ok(Folder {
-                id: r.get(0)?,
-                parent_id: r.get(1)?,
-                name: r.get(2)?,
-                path: r.get(3)?,
-                has_children: r.get(4)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<std::result::Result<_, _>>()
-        .map_err(|e| e.to_string())
+        let rows = stmt
+            .query_map([parent], folder_row)
+            .map_err(|e| e.to_string())?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        let result = self.decorate_folders(rows)?;
+        drop(stmt);
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(result)
     }
     pub fn tracks(&self, folder: i64, offset: u32, limit: u32) -> Result<Vec<Track>> {
         self.tracks_sorted(folder, offset, limit, 0)
@@ -538,6 +551,7 @@ impl Library {
         if query.is_empty() {
             return Ok((vec![], vec![]));
         }
+        let tx = self.db.unchecked_transaction().map_err(|e| e.to_string())?;
         let mut stmt=self.db.prepare("SELECT t.id,t.folder_id,t.path,t.title,t.artist,t.album,t.album_artist,t.artwork,t.codec,t.duration,t.number,t.year FROM track_search JOIN tracks t ON t.id=track_search.rowid WHERE track_search MATCH ? ORDER BY rank LIMIT 200").map_err(|e|e.to_string())?;
         let tracks = stmt
             .query_map([&query], track_row)
@@ -546,18 +560,13 @@ impl Library {
             .map_err(|e| e.to_string())?;
         let mut stmt=self.db.prepare("SELECT f.id,coalesce(f.parent_id,0),f.name,f.path,EXISTS(SELECT 1 FROM folders c WHERE c.parent_id=f.id) FROM folder_search JOIN folders f ON f.id=folder_search.rowid WHERE folder_search MATCH ? ORDER BY rank LIMIT 30").map_err(|e|e.to_string())?;
         let folders = stmt
-            .query_map([&query], |row| {
-                Ok(Folder {
-                    id: row.get(0)?,
-                    parent_id: row.get(1)?,
-                    name: row.get(2)?,
-                    path: row.get(3)?,
-                    has_children: row.get(4)?,
-                })
-            })
+            .query_map([&query], folder_row)
             .map_err(|e| e.to_string())?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
+        let folders = self.decorate_folders(folders)?;
+        drop(stmt);
+        tx.commit().map_err(|e| e.to_string())?;
         Ok((folders, tracks))
     }
     pub fn folder_queue(&self, folder: i64, start: i64) -> Result<(Vec<Track>, usize)> {
@@ -568,6 +577,18 @@ impl Library {
             .ok_or("This track is no longer in the folder. Rescan your library.")?;
         Ok((tracks, index))
     }
+}
+fn folder_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Folder> {
+    Ok(Folder {
+        id: r.get(0)?,
+        parent_id: r.get(1)?,
+        name: r.get(2)?,
+        path: r.get(3)?,
+        has_children: r.get(4)?,
+        kind: FolderKind::Auto,
+        override_kind: FolderKind::Auto,
+        track_count: 0,
+    })
 }
 fn track_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
     Ok(Track {
@@ -703,6 +724,55 @@ mod tests {
             display_path(&linked)
         );
         assert!(!lib.reconcile().unwrap().changed);
+        drop(lib);
+        fs::remove_dir_all(p).unwrap();
+    }
+    #[test]
+    fn folder_presentation_changes_only_cache_and_survives_folder_rename() {
+        let p = sandbox();
+        let root = p.join("Music");
+        let folder = root.join("Random Songs");
+        fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("one.wav");
+        wav(&path);
+        let original = fs::read(&path).unwrap();
+        let db = p.join("cache.db");
+        let lib = Library::open(&db).unwrap();
+        lib.add_root(&root).unwrap();
+        let root_id = lib.folders(0).unwrap()[0].id;
+        let f = lib.folders(root_id).unwrap().remove(0);
+        assert_eq!(f.kind, FolderKind::LooseTracks);
+        assert_eq!(f.track_count, 1);
+        lib.set_folder_kind(f.id, FolderKind::UserCollection as u32)
+            .unwrap();
+        lib.reconcile().unwrap();
+        assert_eq!(
+            lib.folder(f.id).unwrap().unwrap().kind,
+            FolderKind::UserCollection
+        );
+        assert_eq!(fs::read(&path).unwrap(), original);
+        drop(lib);
+        let lib = Library::open(&db).unwrap();
+        assert_eq!(
+            lib.folder(f.id).unwrap().unwrap().override_kind,
+            FolderKind::UserCollection
+        );
+        assert!(lib.set_folder_kind(f.id, 7).is_err());
+        assert!(lib.set_folder_kind(i64::MAX, 1).is_err());
+        #[cfg(windows)]
+        {
+            fs::rename(&folder, root.join("Renamed")).unwrap();
+            lib.reconcile().unwrap();
+            assert_eq!(
+                lib.folder(f.id).unwrap().unwrap().kind,
+                FolderKind::UserCollection
+            );
+        }
+        lib.set_folder_kind(f.id, 0).unwrap();
+        assert_eq!(
+            lib.folder(f.id).unwrap().unwrap().kind,
+            FolderKind::LooseTracks
+        );
         drop(lib);
         fs::remove_dir_all(p).unwrap();
     }

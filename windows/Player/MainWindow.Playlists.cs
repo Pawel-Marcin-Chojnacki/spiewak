@@ -28,7 +28,8 @@ public partial class MainWindow
         if (currentFolder is not null && currentPlaylist == 0) history.Push(currentFolder);
         var playlist = lists.Playlists.Single(p => p.Id == id); currentPlaylist = id; currentFolder = null;
         tracks.Clear(); foreach (var track in result.Tracks) tracks.Add(track);
-        ChildFolders.Visibility = Visibility.Collapsed; FolderArt.Source = Image(tracks.FirstOrDefault()?.Artwork, 192); FolderHeading.Text = playlist.Name; FolderSummary.Text = $"Playlist · {playlist.Count} tracks"; Breadcrumb.Text = "Playlists / " + playlist.Name;
+        FolderViewButton.Visibility = Visibility.Collapsed; SetFolderArtwork(false);
+        ChildFolders.Visibility = Visibility.Collapsed; FolderArt.Source = null; FolderHeading.Text = playlist.Name; FolderSummary.Text = $"Playlist · {playlist.Count} tracks"; Breadcrumb.Text = "Playlists / " + playlist.Name;
         EmptyState.Text = "Add tracks using their context menu, or save your queue here."; EmptyState.Visibility = tracks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         MoreButton.Visibility = tracks.Count == 500 ? Visibility.Visible : Visibility.Collapsed; PlayFolderButton.IsEnabled = tracks.Count > 0; PlaylistTools.Visibility = Visibility.Visible; SortBox.Visibility = Visibility.Collapsed;
         BackButton.IsEnabled = history.Count > 0;

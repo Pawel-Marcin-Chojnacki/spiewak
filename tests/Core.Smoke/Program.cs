@@ -23,6 +23,10 @@ try
         var artist = core.Folders(roots[0].Id).Folders.Single(); Assert(artist.Name == "Sessions", "Artist folder preserved");
         var folder = core.Folders(artist.Id).Folders.Single(); folderId = folder.Id;
         var tracks = core.Tracks(folderId).Tracks; Assert(tracks.Count == 2, "Two tracks indexed");
+        Assert(folder.Kind == FolderKind.Album && folder.TrackCount == 2, "Coherent numbered folder gets album presentation through typed ABI");
+        core.SetFolderKind(folderId, FolderKind.LooseTracks);
+        Assert(core.Folder(folderId).Folders.Single().Kind == FolderKind.LooseTracks, "User can keep tagged album tracks as a loose collection");
+        core.SetFolderKind(folderId, FolderKind.Auto);
         Assert(tracks[0].Duration > 7.9 && tracks[0].Duration < 8.1, "Actual WAV metadata duration");
         Console.WriteLine($"Metadata: title={tracks[0].Title}; artist={tracks[0].Artist}; album={tracks[0].Album}");
         Assert(tracks[0].Title == "Morning" && tracks[0].Artist == "Spiewak Sessions" && tracks[0].Album == "Field Notes", "Metadata tags enrich, never reparent folders");
@@ -105,6 +109,8 @@ try
         moved = Path.Combine(renamedAlbum, Path.GetFileName(moved)); one = Path.Combine(renamedAlbum, Path.GetFileName(one));
         await Wait(() => core.Folder(folderId).Folders.Single().Path == renamedAlbum, "Folder rename preserves ID and automatically updates hierarchy");
         Assert(core.Tracks(folderId).Tracks.Single(t => t.Id == eveningId).Path == moved, "Tracks retain IDs after album move");
+        core.SetFolderKind(folderId, FolderKind.UserCollection);
+        Assert(core.Folder(folderId).Folders.Single().OverrideKind == FolderKind.UserCollection, "Presentation override stored independently of tags");
         var added = Path.Combine(renamedAlbum, "04 - Added.wav"); Wave(added, 550);
         await Wait(() => core.Tracks(folderId).Tracks.Count == 3, "External file creation synchronized without Rescan");
         var addedId = core.Tracks(folderId).Tracks.Single(t => t.Path == added).Id;
@@ -131,7 +137,7 @@ try
         Directory.Move(offline, music);
         await Wait(() => (core.LibraryState().Flags & 1) != 0, "Restored root automatically watched again");
     }
-    using (var core = new Core(db)) { Assert(core.Playlists().Playlists.Single().Count == 2, "Playlist survives restart"); core.Rescan(); Assert(core.PlaylistTracks(playlistId).Tracks.Any(t => t.Id == 0), "Unavailable playlist entry remains visible"); Assert(core.Tracks(folderId).Tracks.Count == 1 && core.Tracks(folderId).Tracks[0].Id == trackId, "Cache persists and external delete reconciles after restart"); }
+    using (var core = new Core(db)) { Assert(core.Folder(folderId).Folders.Single().Kind == FolderKind.UserCollection, "Folder presentation survives restart"); core.SetFolderKind(folderId, FolderKind.Auto); Assert(core.Folder(folderId).Folders.Single().Kind == FolderKind.LooseTracks, "One remaining tagged song stays a loose track in automatic mode"); Assert(core.Playlists().Playlists.Single().Count == 2, "Playlist survives restart"); core.Rescan(); Assert(core.PlaylistTracks(playlistId).Tracks.Any(t => t.Id == 0), "Unavailable playlist entry remains visible"); Assert(core.Tracks(folderId).Tracks.Count == 1 && core.Tracks(folderId).Tracks[0].Id == trackId, "Cache persists and external delete reconciles after restart"); }
     Console.WriteLine("PASS: native Rust ↔ C# vertical slice" + (args.Contains("--audio") ? " including Windows audio" : " (audio skipped)"));
 }
 finally { Directory.Delete(sandbox, true); }

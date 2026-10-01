@@ -1,4 +1,6 @@
 //! Filesystem identities and playback queue rules, independent of UI and storage.
+mod presentation;
+pub use presentation::{FolderEvidence, FolderKind};
 #[derive(Clone, Debug, Default)]
 pub struct Track {
     pub id: i64,
@@ -22,6 +24,9 @@ pub struct Folder {
     pub name: String,
     pub path: String,
     pub has_children: bool,
+    pub kind: FolderKind,
+    pub override_kind: FolderKind,
+    pub track_count: u64,
 }
 
 #[derive(Clone, Default)]

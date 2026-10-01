@@ -1,7 +1,29 @@
 using Spiewak.Native;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 namespace Spiewak;
 public partial class MainWindow
 {
+    private void SetFolderArtwork(bool album)
+    {
+        FolderHeader.ColumnSpacing = album ? 20 : 0;
+        FolderArtFrame.Visibility = album ? Visibility.Visible : Visibility.Collapsed;
+        FolderArtColumn.Width = new GridLength(album ? 96 : 0);
+        FolderHeading.FontSize = album ? 28 : 22;
+    }
+    private async void FolderKindChanged(object sender, RoutedEventArgs args)
+    {
+        if (core is null || currentFolder is null || sender is not MenuFlyoutItem item) return;
+        var id = currentFolder.Id; var version = navigationVersion;
+        try
+        {
+            var kind = (FolderKind)uint.Parse((string)item.Tag);
+            var result = await Task.Run(() => core.SetFolderKind(id, kind));
+            if (closed || version != navigationVersion) return;
+            await Browse(result.Folders.Single(), false); await ReloadTree();
+        }
+        catch (Exception e) { Error(e); }
+    }
     private async Task PollLibrary()
     {
         if (core is null || closed) return;

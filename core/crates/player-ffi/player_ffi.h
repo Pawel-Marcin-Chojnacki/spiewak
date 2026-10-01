@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 typedef struct SpiewakCore SpiewakCore;
-typedef struct { int64_t id, parent; const char *name, *path; uint32_t has_children; } SpiewakFolder;
+typedef struct { int64_t id, parent; const char *name, *path; uint32_t has_children, kind; uint64_t track_count; uint32_t override_kind; } SpiewakFolder;
 typedef struct { int64_t id, folder; const char *title, *artist, *album, *path, *artwork, *codec; double duration; uint32_t number, year; } SpiewakTrack;
 typedef struct { int64_t id; const char *name; uint64_t count; } SpiewakPlaylist;
 /* Read-only header of a larger owned allocation. Never allocate this yourself. */
@@ -45,6 +45,8 @@ SpiewakSnapshot *spiewak_play_playlist(SpiewakCore *, int64_t id, uint32_t index
 SpiewakSnapshot *spiewak_library_state(SpiewakCore *core);
 SpiewakSnapshot *spiewak_folder(SpiewakCore *core, int64_t id);
 SpiewakSnapshot *spiewak_refresh_queue(SpiewakCore *core);
+/* Folder kinds: 0 auto, 1 album, 2 artist, 3 loose, 4 mixed, 5 compilation, 6 collection. */
+SpiewakSnapshot *spiewak_folder_kind(SpiewakCore *, int64_t id, uint32_t kind);
 #ifdef __cplusplus
 }
 #endif

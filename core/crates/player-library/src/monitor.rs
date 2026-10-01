@@ -147,6 +147,9 @@ impl Monitor {
     pub fn state(&self) -> MonitorState {
         self.state.lock().map(|s| s.clone()).unwrap_or_default()
     }
+    pub fn notice(&self, message: &str) {
+        publish(&self.state, message.to_owned());
+    }
     pub fn scanned(&self, report: &ScanReport) -> String {
         let message = report_message(report);
         publish(&self.state, message.clone());

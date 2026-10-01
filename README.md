@@ -42,3 +42,5 @@ See [architecture](docs/architecture.md), [library model](docs/library-model.md)
 ## Product research
 
 [Competitor features, user feedback and implementation priorities (2026-10-01)](docs/research/music-players-2026-10-01.md). The second household user’s specific requirements are pending confirmation; the report does not invent them.
+
+Confirmed household product requirements: [docs/household-requirements.md](docs/household-requirements.md).
