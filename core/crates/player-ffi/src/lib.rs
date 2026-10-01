@@ -13,7 +13,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod metadata;
 pub struct Core {
+    file_operation: Mutex<()>,
     library: Mutex<Library>,
     path: PathBuf,
     audio: Audio,
@@ -48,7 +50,22 @@ impl Core {
         saved.written = Instant::now();
         Ok(())
     }
-    fn command(&self, command: Command) -> Result<(), String> {
+    fn command(&self, mut command: Command) -> Result<(), String> {
+        let _operation = self
+            .file_operation
+            .lock()
+            .map_err(|_| "File operation lock unavailable.")?;
+        if let Command::Replace(rows, _) | Command::Append(rows, _) = &mut command {
+            // A selection can wait behind a file edit; resolve stable IDs after that edit completes.
+            let lib = self.library.lock().map_err(|_| "Library unavailable.")?;
+            for row in rows {
+                if row.id > 0
+                    && let Ok(mut latest) = lib.selected_tracks(&[row.id])
+                {
+                    *row = latest.remove(0);
+                }
+            }
+        }
         self.audio.command(command)?;
         self.checkpoint(true)
     }
@@ -247,7 +264,7 @@ unsafe fn text<'a>(ptr: *const c_char) -> Result<&'a str, String> {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn spiewak_abi_version() -> u32 {
-    7
+    8
 }
 /// # Safety
 /// `path` must point to a valid NUL-terminated UTF-8 database path during this call.
@@ -259,12 +276,14 @@ pub unsafe extern "C" fn spiewak_open(path: *const c_char) -> *mut Core {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let library = Library::open(&path)?;
+        library.reconcile_metadata_operations()?;
         let session = library.load_session()?;
         let tracks = session.tracks.clone();
         let audio = Audio::restore(session)?;
         let scanning = Arc::new(AtomicBool::new(false));
         let monitor = Monitor::start(path.clone(), scanning.clone())?;
         Ok(Core {
+            file_operation: Mutex::new(()),
             library: Mutex::new(library),
             path,
             audio,
@@ -909,7 +928,7 @@ mod tests {
     use super::*;
     #[test]
     fn snapshot_layout_and_utf8_ownership() {
-        assert_eq!(spiewak_abi_version(), 7);
+        assert_eq!(spiewak_abi_version(), 8);
         assert_eq!(std::mem::size_of::<FolderDto>(), 64);
         assert_eq!(std::mem::size_of::<TrackDto>(), 104);
         let s = Snapshot::default().tracks(vec![Track {

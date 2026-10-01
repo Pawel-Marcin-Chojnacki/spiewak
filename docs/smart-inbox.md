@@ -1,6 +1,6 @@
 # Smart Inbox — confirmed household requirement
 
-Not implemented in the first playback slice. Keep automation disabled until manual metadata handling and reversible operation history are reliable.
+Automation remains disabled. Explicit manual metadata handling and reversible operation history now have native Windows validation (METADATA.md); actual dialog acceptance is still open. Provider matching, configured Inbox and automatic application remain unimplemented requirements.
 
 Future pipeline: watch configured inboxes, wait for stable files, validate, read tags, remove only known filename noise, match/fingerprint against trustworthy providers, compute configurable confidence, propose/apply changes, record reversible history. Existing albums must never be silently moved or reorganized. No metadata may be invented for unresolved files.
 

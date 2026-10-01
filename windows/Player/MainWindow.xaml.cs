@@ -196,14 +196,14 @@ public partial class MainWindow : Window
     private async void Stop(object sender, RoutedEventArgs args) => await Command(2);
     private async void Next(object sender, RoutedEventArgs args) => await Command(3);
     private async void Previous(object sender, RoutedEventArgs args) => await Command(4);
-    private async void ToggleShortcut(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { if (FocusManager.GetFocusedElement(Shell.XamlRoot) is TextBox) return; args.Handled = true; await Command(1); }
+    private async void ToggleShortcut(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { if (metadataDialogOpen || FocusManager.GetFocusedElement(Shell.XamlRoot) is TextBox) return; args.Handled = true; await Command(1); }
     private async void TrackKeyDown(object sender, KeyRoutedEventArgs args) { if (args.Key == VirtualKey.Enter && TrackList.SelectedItem is Track track) { args.Handled = true; await PlayOne(track); } }
     private void TrackSelectionChanged(object sender, SelectionChangedEventArgs args)
     { UpdateSelectedFavorite(); if (TrackList.SelectedItem is Track track) { InspectorPath.Text = track.Path; InspectorAlbum.Text = $"{track.Album}\n{track.Codec} · {track.Time}" + (currentListening >= 0 && SearchBox.Text.Trim().Length == 0 ? $"\n{(currentListening == 2 ? "Started" : currentListening == 1 ? "Added" : "Favorited")}: {track.LibraryTime}" : ""); } }
     private void ShowSelected(object sender, RoutedEventArgs args)
     { if (TrackList.SelectedItem is Track track) Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{track.Path}\"") { UseShellExecute = true }); }
     private async void GoBack(object sender, RoutedEventArgs args) => await Back();
-    private async void BackShortcut(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; await Back(); }
+    private async void BackShortcut(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { if (metadataDialogOpen) return; args.Handled = true; await Back(); }
     private async Task Back()
     { if (history.Count == 0) return; if (currentFolder is not null) forward.Push(currentFolder); var folder = history.Pop(); if (folder is not null) { try { await Browse(folder, false); } catch (Exception e) { Error(e); } } BackButton.IsEnabled = history.Count > 0; ForwardButton.IsEnabled = forward.Count > 0; }
     private async void PollPlayback(object? sender, object args)

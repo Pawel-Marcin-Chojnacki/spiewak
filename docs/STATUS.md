@@ -11,12 +11,13 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 - Streaming Rust audio on a dedicated worker; folder queue, play/pause/resume/stop/seek/next/previous/volume.
 - Persistent transport, upcoming queue sidebar, path/album inspector, compact rows, hideable queue, Back, Enter/Space/Alt+Left, basic context menu.
 - Local UTF-8 M3U8 import/export and file/folder/playlist drops to queue; external file references do not create synthetic folders or scan neighboring music.
+- Manual metadata/filename/front-cover proposals, explicit preview/apply/cancel, durable originals, file change history, verified Undo and explicit interrupted-write recovery. See METADATA.md.
 - Favorites, first-indexed/recently-added view and successful-playback-start history; persistent app state and unavailable snapshots.
 - Cached startup before background reconciliation; rescan external additions/renames/deletions without changing music.
 
 ## Verification
 
-- Rust: thirty-seven unit/integration tests; fmt and clippy with warnings denied.
+- Rust: forty-six unit/integration tests; fmt and clippy with warnings denied.
 - Release WinUI build on ARM64; native shell visually inspected in actual VM screenshots.
 - C# ↔ Rust smoke: Unicode paths, actual WAV metadata/tags, folder fidelity, IDs across rescan/restart, external rename/delete, SHA-256 music preservation.
 - Codec integration: generated MP3, FLAC, AAC/M4A, ALAC, Ogg Vorbis and WAV fixtures all index, decode/play and seek successfully on Windows ARM64. Corrupt audio returns an error while previous audio/queue continue. FFmpeg 9.0.2 installed via winget for fixture generation only.
@@ -27,11 +28,11 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 
 - No Opus decoder in pinned Rodio/Symphonia graph. Files are indexed but playback reports an error.
 - Native watcher and stable IDs within one root/volume are implemented. Reconciliation still walks roots in batches; per-event incremental updates, cross-root/cross-volume identity and network performance are open. Conservative folder presentation is implemented; a derived album/artist catalog remains open.
-- Embedded/folder artwork cache is implemented. Tag editing, Smart Inbox, provider integrations and Undo remain open. Source-music mutation is absent/disabled.
+- Embedded/folder artwork cache and explicit manual metadata/filename/front-cover editing with Undo are implemented. Smart Inbox/provider discovery/downloads/automatic application remain open. Indexing never writes music; only explicit preview/apply/undo/recovery APIs can mutate a selected file.
 - No gapless guarantee, ReplayGain, output-device selector or global media keys. Mute is implemented.
 - Mixed queues, selection append/play-next, upcoming edits/clear, queue jump, shuffle upcoming, repeat off/queue/track and mute are implemented. Restart restores queue occurrences, cursor/position, volume and repeat/mute paused.
 - Tree expansion/layout/density are not persisted; no resizable left panel. Forward navigation is implemented.
-- Native extended selection exists; batch Play/Play next/Add to queue are implemented; playlist actions are implemented; tag editing remains open. Full accessibility/high contrast/high-DPI/multi-monitor review and 1k/10k/100k benchmarks remain open.
+- Native extended selection exists; batch Play/Play next/Add to queue are implemented; playlist actions and manual tag editing are implemented; actual metadata dialog gestures remain unverified. Full accessibility/high contrast/high-DPI/multi-monitor review and 1k/10k/100k benchmarks remain open.
 - Unpackaged self-contained developer build; proper installer/update/diagnostic export is later work.
 
 ## Reproduction
@@ -135,3 +136,11 @@ Thirty-seven Rust tests, fmt, clippy with warnings denied, WinUI ARM64 Release a
 The current demo window launches and shows Import beside Playlists, compact real-folder navigation and a stopped transport. The Import button hover is visible, but its Computer Use click still did not open a picker. Actual picker selection, Explorer drag gestures, export dialogs, high-DPI/input and household acceptance remain open. Native tests are not substituted for these gates. No file associations/context-menu registry entries are installed.
 
 Git identity diagnostic: playlist-files commit 015d64d was pushed with author name `unknown` and the existing owner email after inheriting an overlong corrupted name from earlier published commits failed. This affects author metadata, not source/test results. Subsequent commits use process-local ASCII `Pawel` with the same email; AGENTS.md documents the Windows encoding trap. Published history is retained without force-push or rewrite.
+
+## Manual metadata and reversible history milestone
+
+Schema 11 and separately owned ABI 8 metadata DTOs implement current fields, safe preparation, explicit apply/cancel/undo and interrupted-write recovery. Originals stay in app data. Windows file locks/identity/SHA-256 prevent applying stale proposals or Undo over later external edits; collisions do not overwrite another file. SQLite failure rolls back the source and rename. Filename-only edits preserve bytes without a tag rewrite. Recovery first saves unrecognized current bytes. Indexing excludes operation backups. Album hierarchy/loose-song presentation and stable favorite/playlist/queue references are retained. See METADATA.md for quota, filesystem and crash limitations.
+
+Forty-six Rust tests, fmt, clippy with warnings denied, release DLL, WinUI ARM64 build and native C# checks pass. The six generated codecs retain identical decoded PCM after tag writes and byte-exact Undo. WASAPI checks verify editing current playback leaves it paused at the retained position, explicit resume uses the edited path, and editing an upcoming track keeps unrelated playback. Current feature CI is not claimed. The new shell starts and visibly includes File change history. A Computer Use click on that button produced hover only, with no verified dialog; actual metadata context-menu/picker/dialog/history gestures, accessibility and larger files remain unverified. Automatic providers/Inbox/downloads remain unfinished R12 work.
+
+Reproduction logs on the VM: `C:\Users\pawel\spiewak-metadata-full-build.log`, `spiewak-metadata-tests.log`, `spiewak-metadata-clippy.log`, `spiewak-metadata-build.log`, `spiewak-metadata-smoke-audio.log`.

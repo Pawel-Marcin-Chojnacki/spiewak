@@ -17,7 +17,7 @@ Windows 11, Visual Studio 2026 (C++ desktop tools / Windows SDK), .NET 10 and Ru
 
 When cross-building x64 on ARM64, the x64 .NET 10 SDK must also be installed for native smoke tests. GitHub CI uses Windows x64.
 
-Click **Add music folder**, browse your real directory tree, and double-click a track. Space toggles playback; Enter plays the selection; Alt+Left goes back. The app never changes your music. Its database lives in `%LOCALAPPDATA%/Spiewak`. Keep it: besides rebuildable metadata it contains your playlists, favorites, history and playback state.
+Click **Add music folder**, browse your real directory tree, and double-click a track. Space toggles playback; Enter plays the selection; Alt+Left goes back. Indexing never changes your music. Explicit **Edit tags…** offers a preview before writing the selected file; **File change history** can Undo those changes using retained originals. Automatic metadata writes remain disabled. Its database lives in `%LOCALAPPDATA%/Spiewak`. Keep it: besides rebuildable metadata it contains your playlists, favorites, history and playback state. Keep the adjacent `library.operations` directory for file-change recovery. See [manual metadata and recovery limits](docs/METADATA.md).
 
 ## Windows audio integration test
 

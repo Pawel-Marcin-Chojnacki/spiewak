@@ -39,6 +39,8 @@ pub enum Command {
     Clear,
     Jump(usize),
     Refresh(Vec<Track>),
+    BeginEdit(i64),
+    EndEdit,
 }
 type Request = (Command, mpsc::Sender<Result<(), String>>);
 #[derive(Default)]
@@ -117,6 +119,7 @@ impl Audio {
             let mut repeat = session.flags >> 1;
             let mut resume_position = session.position;
             let mut auto_advance = false;
+            let mut editing = false;
             let mut changed = false;
             loop {
                 let request = match receiver.recv_timeout(Duration::from_millis(50)) {
@@ -181,6 +184,17 @@ impl Audio {
                                     load_position = resume_position;
                                 }
                             }
+                            Command::BeginEdit(id) => {
+                                editing = true;
+                                if queue.selected().is_some_and(|t| t.id == id) {
+                                    auto_advance = false;
+                                    if let Some(p) = player.take() {
+                                        resume_position = p.get_pos().as_secs_f64();
+                                        p.stop();
+                                    }
+                                }
+                            }
+                            Command::EndEdit => editing = false,
                             Command::Stop => {
                                 auto_advance = false;
                                 resume_position = 0.0;
@@ -306,7 +320,8 @@ impl Audio {
                         s.error = error.clone().unwrap_or_default();
                     }
                     acknowledgement = Some((reply, result));
-                } else if auto_advance
+                } else if !editing
+                    && auto_advance
                     && player.as_ref().is_some_and(|p| p.empty() && !p.is_paused())
                     && queue.advance(true, repeat).is_some()
                 {

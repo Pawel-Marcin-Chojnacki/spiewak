@@ -606,6 +606,7 @@ fn publish_new(source: &Path, target: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 pub(super) fn drop_migration(db: &Connection) {
+    super::metadata::drop_migration(db);
     db.execute_batch("DROP TRIGGER playlist_track_snapshot; ALTER TABLE playlist_items DROP COLUMN duration; ALTER TABLE playlist_items DROP COLUMN codec; CREATE TRIGGER playlist_track_snapshot BEFORE DELETE ON tracks BEGIN UPDATE playlist_items SET path=old.path,title=old.title,artist=old.artist,album=old.album WHERE track_id=old.id; END;").unwrap();
 }
 #[cfg(test)]
@@ -808,6 +809,7 @@ mod tests {
         let id = lib
             .save_queue_playlist("Saved", std::slice::from_ref(&track))
             .unwrap();
+        super::super::metadata::drop_migration(&lib.db);
         lib.db.execute_batch("DROP TRIGGER playlist_track_snapshot; ALTER TABLE playlist_items DROP COLUMN duration; ALTER TABLE playlist_items DROP COLUMN codec; CREATE TRIGGER playlist_track_snapshot BEFORE DELETE ON tracks BEGIN UPDATE playlist_items SET path=old.path,title=old.title,artist=old.artist,album=old.album WHERE track_id=old.id; END; PRAGMA user_version=9;").unwrap();
         drop(lib);
         let lib = Library::open(&db).unwrap();

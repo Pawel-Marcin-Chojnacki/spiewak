@@ -66,6 +66,7 @@ public partial class MainWindow
     private async void ToggleSelectedFavorite(object sender, RoutedEventArgs args) => await FavoriteSelection();
     private async void FavoriteShortcut(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
+        if (metadataDialogOpen) return;
         if (FocusManager.GetFocusedElement(Shell.XamlRoot) is TextBox) return;
         args.Handled = true;
         await FavoriteSelection();

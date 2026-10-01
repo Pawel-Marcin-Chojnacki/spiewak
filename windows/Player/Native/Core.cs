@@ -37,7 +37,7 @@ internal sealed class CoreHandle : SafeHandleZeroOrMinusOneIsInvalid
     public CoreHandle(nint handle) : base(true) { SetHandle(handle); }
     protected override bool ReleaseHandle() { NativeMethods.Close(handle); return true; }
 }
-internal static class NativeMethods
+internal static partial class NativeMethods
 {
     [DllImport("spiewak_core", EntryPoint = "spiewak_listening_tracks", CallingConvention = CallingConvention.Cdecl)] internal static extern nint ListeningTracks(CoreHandle core, uint view, uint offset);
     [DllImport("spiewak_core", EntryPoint = "spiewak_favorites", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Favorites(CoreHandle core, [In] long[] ids, nuint count, uint favorite);
@@ -76,7 +76,7 @@ internal static class NativeMethods
     [DllImport(Dll, EntryPoint = "spiewak_playlist_command", CallingConvention = CallingConvention.Cdecl)] internal static extern nint PlaylistCommand(CoreHandle core, long id, uint command, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, [In] long[] ids, nuint count, uint index);
 
 }
-public sealed class Core : IDisposable
+public sealed partial class Core : IDisposable
 {
     private readonly CoreHandle handle;
     [StructLayout(LayoutKind.Sequential)]
@@ -98,7 +98,7 @@ public sealed class Core : IDisposable
     [StructLayout(LayoutKind.Sequential)] private struct PlaylistRow { public long Id; public nint Name; public ulong Count; }
     public Core(string databasePath)
     {
-        if (NativeMethods.Version() != 7 || Marshal.SizeOf<FolderRow>() != 64 || Marshal.SizeOf<TrackRow>() != 104 || Marshal.SizeOf<Header>() != 112)
+        if (NativeMethods.Version() != 8 || Marshal.SizeOf<FolderRow>() != 64 || Marshal.SizeOf<TrackRow>() != 104 || Marshal.SizeOf<Header>() != 112 || Marshal.SizeOf<MetadataHeader>() != 24 || Marshal.SizeOf<MetadataRow>() != 72 || Marshal.SizeOf<NativeMethods.MetadataFieldRow>() != 16)
             throw new InvalidOperationException("The native core has an incompatible ABI. Rebuild the application.");
         handle = new CoreHandle(NativeMethods.Open(databasePath));
         if (handle.IsInvalid) throw new IOException($"Cannot open the library at {databasePath}: {Text(NativeMethods.OpenError())}");

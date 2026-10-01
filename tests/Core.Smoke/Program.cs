@@ -158,6 +158,7 @@ try
     await SessionChecks(sandbox, dll, args.Contains("--audio"));
     var artworkFfmpeg = Array.IndexOf(args, "--ffmpeg");
     await ArtworkChecks(sandbox, args.Contains("--audio"), artworkFfmpeg >= 0 ? args[artworkFfmpeg + 1] : null);
+    await MetadataChecks(sandbox, args.Contains("--audio"), artworkFfmpeg >= 0 ? args[artworkFfmpeg + 1] : null);
     Console.WriteLine("PASS: native Rust ↔ C# vertical slice" + (args.Contains("--audio") ? " including Windows audio" : " (audio skipped)"));
 }
 finally { Directory.Delete(sandbox, true); }
@@ -456,4 +457,90 @@ static async Task PlaylistFileChecks(string sandbox, bool audio)
         Assert(!core.Now().Playing && core.PlaylistTracks(id).Tracks.Count == 4, "Imported playlists survive restart without autoplay");
         Assert(core.PlaylistTracks(id).Tracks[0].Id == firstId, "Imported reference follows promotion into the real library");
     }
+}
+
+
+static async Task MetadataChecks(string sandbox, bool audio, string? ffmpeg)
+{
+    var root = Path.Combine(sandbox, "Metadata Żółć"); Directory.CreateDirectory(root);
+    var source = Path.Combine(root, "Artist - Song (Live) (Official Video).wav"); Wave(source, 330);
+    var files = new List<string> { source };
+    if (ffmpeg is not null)
+        foreach (var (name, codec) in new[] { ("MP3.mp3", "libmp3lame"), ("FLAC.flac", "flac"), ("AAC.m4a", "aac"), ("ALAC.m4a", "alac"), ("Ogg.ogg", "libvorbis") })
+        { var path = Path.Combine(root, name); ConvertAudio(ffmpeg, source, path, codec); files.Add(path); }
+    var db = Path.Combine(sandbox, "metadata.db");
+    long undoId = 0; byte[] original = []; long stableId = 0;
+    using (var core = new Core(db))
+    {
+        core.DropFiles(files);
+        var tracks = core.Queue().Tracks;
+        foreach (var track in tracks)
+        {
+            var bytes = File.ReadAllBytes(track.Path);
+            var pcm = ffmpeg is not null ? DecodedHash(ffmpeg, track.Path) : null;
+            var current = core.Metadata(track.Id);
+            Assert(current.TrackId == track.Id && current.Values.Count == 18 && current.State == OperationState.Current, "Typed ABI 8 reads all editable metadata: " + track.FileName);
+            var name = "Nowa Żółć " + track.Id + Path.GetExtension(track.Path);
+            var preview = core.PrepareMetadata(track.Id, new[] { new MetadataValue(MetadataField.Title, "Żółć — Changed"), new MetadataValue(MetadataField.Artist, "Uncommon artist"), new MetadataValue(MetadataField.Album, "Optional tag"), new MetadataValue(MetadataField.FileName, name) });
+            Assert(preview.Count == 2 && preview[0].TargetPath == track.Path && preview[1].TargetPath == Path.Combine(root, name), "Before/after proposal is copied across the native boundary");
+            Assert(File.ReadAllBytes(track.Path).SequenceEqual(bytes), "Preparing metadata leaves the original untouched");
+            if (audio)
+            {
+                core.Selection(new[] { track }, 0); await Wait(() => core.Now().Playing && core.Now().Position > 0.15, "Playback before metadata editing");
+                core.Command(5, 2); await Wait(() => core.Now().Position > 1.8, "Position before metadata save");
+            }
+            var applied = core.ApplyMetadata(preview[1].OperationId);
+            Assert(applied.State == OperationState.Applied && !File.Exists(track.Path) && File.Exists(applied.TargetPath), "Explicit apply renames only this file");
+            Assert(core.Metadata(track.Id).Values.Single(v => v.Field == MetadataField.Title).Value == "Żółć — Changed", "Unicode metadata survives native write/read");
+            Assert(core.Queue().Tracks.Single(t => t.Id == track.Id).Path == applied.TargetPath, "Queue keeps stable reference and refreshed path");
+            Assert(core.Folders().Folders.Count == 0, "Editing single songs never creates virtual albums or library roots");
+            if (pcm is not null) Assert(DecodedHash(ffmpeg!, applied.TargetPath).SequenceEqual(pcm), "Decoded PCM is unchanged after tag write: " + track.Codec);
+            if (audio)
+            {
+                Assert(!core.Now().Playing && core.Now().Position > 1.8 && core.Now().CurrentId == track.Id, "Edited decoder unloads with cursor and position retained");
+                core.Command(1); await Wait(() => core.Now().Playing && core.Now().Position > 1.8, "Resume decodes the edited file at retained position"); core.Command(2);
+            }
+            var undo = core.UndoMetadata(applied.OperationId);
+            Assert(undo.State == OperationState.Undone && File.ReadAllBytes(track.Path).SequenceEqual(bytes) && !File.Exists(applied.TargetPath), "Undo restores exact bytes and filename: " + track.Codec);
+        }
+        if (audio && tracks.Count > 1)
+        {
+            var playingFirst = tracks[0]; var next = tracks[1];
+            core.Selection(new[] { playingFirst, next }, 0); await Wait(() => core.Now().Playing && core.Now().Position > 0.15, "Unrelated playback before editing upcoming track");
+            var proposed = core.PrepareMetadata(next.Id, new[] { new MetadataValue(MetadataField.Title, "Upcoming renamed title"), new MetadataValue(MetadataField.FileName, "Upcoming edited" + Path.GetExtension(next.Path)) }).Last();
+            var position = core.Now().Position; core.ApplyMetadata(proposed.OperationId);
+            await Task.Delay(150);
+            Assert(core.Now().Playing && core.Now().CurrentId == playingFirst.Id && core.Now().Position > position, "Editing upcoming file preserves unrelated playback");
+            core.Command(3); await Wait(() => core.Now().Playing && core.Now().CurrentId == next.Id, "Next opens the edited upcoming path");
+            core.UndoMetadata(proposed.OperationId); Assert(!core.Now().Playing && core.Now().CurrentId == next.Id, "Undo of current track leaves playback paused"); core.Command(2);
+        }
+        core.DropFiles(new[] { source }); // current queue may have been replaced by explicit playback
+        var first = core.Queue().Tracks.First(t => t.Path == source);
+        var suggestion = core.CleanupSuggestion(first.Id);
+        Assert(suggestion.Single(v => v.Field == MetadataField.FileName).Value == "Artist - Song (Live).wav", "Download cleanup preserves the Live version label");
+        var before = File.ReadAllBytes(source);
+        var cancelled = core.PrepareMetadata(first.Id, new[] { new MetadataValue(MetadataField.Title, "Cancelled") }).Last();
+        core.CancelMetadata(cancelled.OperationId);
+        Assert(File.ReadAllBytes(source).SequenceEqual(before) && core.MetadataOperations().Any(r => r.OperationId == cancelled.OperationId && r.State == OperationState.Cancelled), "Cancelled proposal changes only app data");
+        var rename = core.PrepareMetadata(first.Id, new[] { new MetadataValue(MetadataField.FileName, "Artist - Song (Live).wav") }).Last();
+        var changed = core.ApplyMetadata(rename.OperationId);
+        Assert(File.ReadAllBytes(changed.TargetPath).SequenceEqual(before), "Filename-only cleanup does not rewrite any tags/audio");
+        stableId = first.Id; original = before; undoId = changed.OperationId;
+    }
+    using (var core = new Core(db))
+    {
+        Assert(core.MetadataOperations().Single(r => r.OperationId == undoId).State == OperationState.Applied, "File change history survives process restart");
+        core.UndoMetadata(undoId);
+        Assert(File.ReadAllBytes(source).SequenceEqual(original) && core.Metadata(stableId).OriginalPath == source, "Undo survives native core restart");
+    }
+}
+static byte[] DecodedHash(string ffmpeg, string path)
+{
+    var start = new System.Diagnostics.ProcessStartInfo(ffmpeg) { UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true };
+    foreach (var arg in new[] { "-hide_banner", "-loglevel", "error", "-i", path, "-map", "0:a:0", "-f", "s16le", "-acodec", "pcm_s16le", "-" }) start.ArgumentList.Add(arg);
+    using var process = System.Diagnostics.Process.Start(start) ?? throw new Exception("Cannot decode fixture");
+    var error = process.StandardError.ReadToEndAsync();
+    using var pcm = new MemoryStream(); process.StandardOutput.BaseStream.CopyTo(pcm); process.WaitForExit();
+    if (process.ExitCode != 0) throw new Exception("PCM fixture decode failed: " + error.GetAwaiter().GetResult());
+    return SHA256.HashData(pcm.ToArray());
 }

@@ -7,7 +7,9 @@ use player_domain::{Folder, FolderKind, Track};
 mod artwork;
 mod identity;
 mod listening;
+mod metadata;
 mod monitor;
+pub use metadata::{MetadataField, MetadataRecord, MetadataValue, OperationState};
 mod playlist_files;
 mod playlists;
 mod presentation;
@@ -24,6 +26,7 @@ type Result<T> = std::result::Result<T, String>;
 pub struct Library {
     db: Connection,
     artwork_dir: PathBuf,
+    operation_dir: PathBuf,
 }
 #[derive(Default, Debug)]
 pub struct ScanReport {
@@ -115,7 +118,7 @@ impl Library {
         let schema_version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if schema_version > 10 {
+        if schema_version > 11 {
             return Err("This library cache belongs to a newer version of Spiewak. Update the app before opening it.".into());
         }
         db.busy_timeout(std::time::Duration::from_secs(10))
@@ -204,9 +207,13 @@ impl Library {
         if schema_version < 10 {
             playlist_files::migrate(&db)?;
         }
+        if schema_version < 11 {
+            metadata::migrate(&db)?;
+        }
         Ok(Self {
             db,
             artwork_dir: path.with_extension("artwork"),
+            operation_dir: path.with_extension("operations"),
         })
     }
     pub fn roots(&self) -> Result<Vec<String>> {
@@ -376,7 +383,11 @@ impl Library {
                         }
                     }
                     if meta.is_dir() {
-                        if display_path(&path) == display_path(&self.artwork_dir) {
+                        if display_path(&path)
+                            .eq_ignore_ascii_case(&display_path(&self.artwork_dir))
+                            || display_path(&path)
+                                .eq_ignore_ascii_case(&display_path(&self.operation_dir))
+                        {
                             continue;
                         }
                         pending.push((path, Some(folder_id)));

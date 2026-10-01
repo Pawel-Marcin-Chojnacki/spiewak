@@ -33,7 +33,7 @@ public partial class MainWindow
         }
         catch (Exception e) { Error(e); }
     }
-    private void SearchShortcut(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; SearchBox.Focus(FocusState.Programmatic); SearchBox.SelectAll(); }
+    private void SearchShortcut(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { if (metadataDialogOpen) return; args.Handled = true; SearchBox.Focus(FocusState.Programmatic); SearchBox.SelectAll(); }
     private void SearchKeyDown(object sender, KeyRoutedEventArgs args)
     {
         if (args.Key == VirtualKey.Escape) { SearchBox.Text = ""; TrackList.Focus(FocusState.Programmatic); args.Handled = true; }
@@ -42,7 +42,7 @@ public partial class MainWindow
     private async void SortChanged(object sender, SelectionChangedEventArgs args)
     { sortOrder = (uint)Math.Max(0, SortBox.SelectedIndex); if (core is not null && currentFolder is not null && SearchBox.Text.Length == 0) { try { await Browse(currentFolder, false); } catch (Exception e) { Error(e); } } }
     private async void GoForward(object sender, RoutedEventArgs args) => await Forward();
-    private async void ForwardShortcut(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; await Forward(); }
+    private async void ForwardShortcut(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { if (metadataDialogOpen) return; args.Handled = true; await Forward(); }
     private async Task Forward()
     { if (forward.Count == 0) return; if (currentFolder is not null) history.Push(currentFolder); var folder = forward.Pop(); try { await Browse(folder, false); } catch (Exception e) { Error(e); } }
 }

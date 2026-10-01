@@ -59,6 +59,19 @@ SpiewakSnapshot *spiewak_export_playlist(SpiewakCore *, int64_t id, const char *
 /* Appends all occurrences without autoplay or adding library roots. */
 SpiewakSnapshot *spiewak_drop_files(SpiewakCore *, const char *const *paths, size_t count);
 SpiewakSnapshot *spiewak_save_queue_playlist(SpiewakCore *, const char *name);
+/* Metadata snapshots own all rows/strings. Field enum 1..18 matches MetadataField in the native client.
+   States: 0 current, 1 prepared, 2 applying, 3 applied, 4 undoing, 5 undone, 6 conflict, 7 cancelled. */
+typedef struct { uint32_t field; const char *value; } SpiewakMetadataField;
+typedef struct { int64_t operation_id, track_id; uint32_t state; int64_t created;
+ const char *original_path, *target_path, *message; const SpiewakMetadataField *fields; size_t field_count;
+} SpiewakMetadataRecord;
+typedef struct { const char *error; const SpiewakMetadataRecord *rows; size_t count; } SpiewakMetadataSnapshot;
+/* view: 0 track tags, 1 latest 100 operations, 2 conservative filename/tag suggestion. */
+SpiewakMetadataSnapshot *spiewak_metadata(SpiewakCore *, int64_t id, uint32_t view);
+SpiewakMetadataSnapshot *spiewak_metadata_prepare(SpiewakCore *, int64_t track, const SpiewakMetadataField *, size_t count);
+/* action: 1 apply, 2 undo, 3 cancel, 4 explicit original recovery. The edited selected track stays paused. */
+SpiewakMetadataSnapshot *spiewak_metadata_command(SpiewakCore *, int64_t operation, uint32_t action);
+void spiewak_metadata_free(SpiewakMetadataSnapshot *);
 #ifdef __cplusplus
 }
 #endif
