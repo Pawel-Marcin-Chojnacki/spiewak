@@ -38,3 +38,7 @@ python tools/generate-demo.py "$env:USERPROFILE\Music\Spiewak Demo"
 The generator refuses to overwrite an existing folder. It downloads no music. Audio tests use low-amplitude sine tones, create a temporary library, and remove it afterwards.
 
 See [architecture](docs/architecture.md), [library model](docs/library-model.md), [audio](docs/audio-engine.md), [FFI](docs/ffi.md), [UX](docs/ux.md), [Smart Inbox policy](docs/smart-inbox.md), and the [complete product plan](docs/master-plan.md). This delivery covers foundation and the first useful playback path; it is not the complete roadmap.
+
+## Product research
+
+[Competitor features, user feedback and implementation priorities (2026-10-01)](docs/research/music-players-2026-10-01.md). The second household user’s specific requirements are pending confirmation; the report does not invent them.

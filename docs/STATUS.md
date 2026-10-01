@@ -63,3 +63,7 @@ SQLite schema 2 adds Unicode FTS5 indexes for title/artist/album/path and folder
 ## Playlist milestone
 
 SQLite schema 3 stores ordered playlists, including duplicate occurrences. Create/save queue is atomic; append resolves all selected IDs before mutation. Rename, remove/reorder items, soft-delete and restore playlist are connected to native UI. Missing files retain snapshot labels/paths as unavailable entries. Playlist playback uses occurrence index, not track ID. Ten Rust tests plus C# create/append/reorder/delete/restore/restart/missing-file checks pass. UI list rows have reference identity so duplicate occurrences are selected independently. M3U import/export and smart playlists remain open.
+
+## Product research
+
+Source-linked research of ten player references, praise and friction from public user discussions, implementation priorities and acceptance scenarios is in research/music-players-2026-10-01.md. Household user requirements are pending the owner’s details. Final UI/UX work should preserve the semantic theme boundary and validate these actual workflows.
