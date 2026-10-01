@@ -107,6 +107,7 @@ public partial class MainWindow : Window
         ToolTipService.SetToolTip(FolderViewButton, folder.OverrideKind == FolderKind.Auto ? "Automatic presentation · change only how this folder appears" : "Your chosen presentation · files stay in this folder");
         SetFolderArtwork(folder.AlbumPresentation);
         MoreButton.Visibility = tracks.Count == 500 ? Visibility.Visible : Visibility.Collapsed;
+        PlayFolderButton.Content = "▶ Play folder";
         PlayFolderButton.IsEnabled = tracks.Count > 0; BackButton.IsEnabled = history.Count > 0; ForwardButton.IsEnabled = forward.Count > 0;
         FolderArt.Source = folder.AlbumPresentation ? Image(tracks.FirstOrDefault()?.Artwork, 192) : null;
     }
@@ -144,7 +145,9 @@ public partial class MainWindow : Window
     private async void Rescan(object sender, RoutedEventArgs args) => await Scan(null);
     private async Task Play(Track track)
     { if (core is null) return; var search = SearchBox.Text.Trim().Length > 0; var sort = sortOrder; var playlist = currentPlaylist; var index = TrackList.SelectedItem == track ? TrackList.SelectedIndex : tracks.IndexOf(track); try { await Task.Run(() => playlist != 0 ? core.PlayPlaylist(playlist, (uint)Math.Max(0,index)) : search ? core.Selection(new[] { track }, 0) : core.Play(track.Folder, track.Id, sort)); } catch (Exception e) { Error(e); } }
-    private async void TrackDoubleTapped(object sender, DoubleTappedRoutedEventArgs args) { if (TrackList.SelectedItem is Track track) await Play(track); }
+    private async Task PlayOne(Track track)
+    { if (core is null) return; try { await Task.Run(() => core.Selection(new[] { track }, 0)); } catch (Exception e) { Error(e); } }
+    private async void TrackDoubleTapped(object sender, DoubleTappedRoutedEventArgs args) { if (TrackList.SelectedItem is Track track) await PlayOne(track); }
     private async void PlaySelected(object sender, RoutedEventArgs args) => await Selection(0);
     private async void AddNext(object sender, RoutedEventArgs args) => await Selection(2);
     private async void AddToQueue(object sender, RoutedEventArgs args) => await Selection(1);
@@ -155,7 +158,8 @@ public partial class MainWindow : Window
         if (selected.Length == 0) return;
         try { await Task.Run(() => core.Selection(selected, mode)); } catch (Exception e) { Error(e); }
     }
-    private async void PlayFolder(object sender, RoutedEventArgs args) { if (tracks.FirstOrDefault() is Track track) await Play(track); }
+    private async void PlayFolder(object sender, RoutedEventArgs args)
+    { if (SearchBox.Text.Trim().Length > 0) { if (core is not null && tracks.Count > 0) { try { var rows = tracks.ToArray(); await Task.Run(() => core.Selection(rows, 0)); } catch (Exception e) { Error(e); } } } else if (tracks.FirstOrDefault() is Track track) await Play(track); }
     private async void QueueDoubleTapped(object sender, DoubleTappedRoutedEventArgs args) { if (QueueList.SelectedIndex >= 0) await Command(14, queueStartIndex + QueueList.SelectedIndex); }
     private async void ShuffleQueue(object sender, RoutedEventArgs args) => await Command(9);
     private async void CycleRepeat(object sender, RoutedEventArgs args) => await Command(8);
@@ -173,7 +177,7 @@ public partial class MainWindow : Window
     private async void Next(object sender, RoutedEventArgs args) => await Command(3);
     private async void Previous(object sender, RoutedEventArgs args) => await Command(4);
     private async void ToggleShortcut(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { if (FocusManager.GetFocusedElement(Shell.XamlRoot) is TextBox) return; args.Handled = true; await Command(1); }
-    private async void TrackKeyDown(object sender, KeyRoutedEventArgs args) { if (args.Key == VirtualKey.Enter && TrackList.SelectedItem is Track track) { args.Handled = true; await Play(track); } }
+    private async void TrackKeyDown(object sender, KeyRoutedEventArgs args) { if (args.Key == VirtualKey.Enter && TrackList.SelectedItem is Track track) { args.Handled = true; await PlayOne(track); } }
     private void TrackSelectionChanged(object sender, SelectionChangedEventArgs args)
     { if (TrackList.SelectedItem is Track track) { InspectorPath.Text = track.Path; InspectorAlbum.Text = $"{track.Album}\n{track.Codec} · {track.Time}"; } }
     private void ShowSelected(object sender, RoutedEventArgs args)

@@ -31,7 +31,7 @@ public partial class MainWindow
         FolderViewButton.Visibility = Visibility.Collapsed; SetFolderArtwork(false);
         ChildFolders.Visibility = Visibility.Collapsed; FolderArt.Source = null; FolderHeading.Text = playlist.Name; FolderSummary.Text = $"Playlist · {playlist.Count} tracks"; Breadcrumb.Text = "Playlists / " + playlist.Name;
         EmptyState.Text = "Add tracks using their context menu, or save your queue here."; EmptyState.Visibility = tracks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        MoreButton.Visibility = tracks.Count == 500 ? Visibility.Visible : Visibility.Collapsed; PlayFolderButton.IsEnabled = tracks.Count > 0; PlaylistTools.Visibility = Visibility.Visible; SortBox.Visibility = Visibility.Collapsed;
+        MoreButton.Visibility = tracks.Count == 500 ? Visibility.Visible : Visibility.Collapsed; PlayFolderButton.Content = "▶ Play playlist"; PlayFolderButton.IsEnabled = tracks.Count > 0; PlaylistTools.Visibility = Visibility.Visible; SortBox.Visibility = Visibility.Collapsed;
         BackButton.IsEnabled = history.Count > 0;
     }
     private async Task MorePlaylist()

@@ -2,7 +2,7 @@
 
 A three-region desktop shell keeps a lazy native folder tree, dense virtualized track rows, and queue/file inspector visible together. Transport stays at the bottom across navigation. Real filenames are secondary row text; the inspector shows the full selectable path. Local folder artwork appears in the folder heading and current-track thumbnail.
 
-Add music folder opens a native Windows folder picker. Open folders through either the tree or the center subfolder list. Double-click/Enter plays a track and replaces the queue with that entire folder. Play folder starts its first track. The sidebar lists upcoming tracks; double-clicking one jumps to its occurrence in the existing mixed queue. Queue editing preserves the playing source.
+Add music folder opens a native Windows folder picker. Open folders through either the tree or the center subfolder list. Double-click/Enter plays only that track. The explicit Play folder / Play playlist / Play results button replaces the queue with the indicated full source. The sidebar lists upcoming tracks; double-clicking one jumps to its occurrence in the existing mixed queue. Queue editing preserves the playing source.
 
 Space toggles playback; Alt+Left goes back; native extended selection supports Ctrl/Shift. Track context actions include Play and Show in Explorer. Compact changes row padding, and Queue toggles the right panel. Labels/focus use native WinUI automation properties and theme resources. Slider seeks are debounced 180 ms; timer updates do not fight pending user seeks.
 
@@ -13,3 +13,5 @@ Actual screenshots must be inspected for each completed iteration. UI automation
 The interim visual direction is a quiet dark music workspace, off-white text and lavender transport accent. Design/Theme.xaml owns semantic colors and shared control styles (light/high contrast also defined). Retain native focus/keyboard/screen-reader behavior when refining visuals later. This is a functional baseline, not final UI/UX approval.
 
 Confirmed household rules are in household-requirements.md. Existing folders get conservative semantic presentation plus a manual override in the folder menu. Album/Compilation folders have a 96 px artwork header; LooseTracks/MixedCollection/Artist/UserCollection have a compact text header and real-file list. Search/playlists also use compact headers. The child folder list shows a quiet kind/count label. No album entity is synthesized from a stray file's Album tag. A dedicated Home with a side section for singles is still open; final UI should validate it with household workflows rather than assume this shell is approved.
+
+Successive Play next requests use FIFO within the pending prefix, preserving the selection order and existing upcoming suffix. Queue jump, Previous, manual reorder or shuffle starts a new request context.

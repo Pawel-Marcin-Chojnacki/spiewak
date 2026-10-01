@@ -14,7 +14,7 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 
 ## Verification
 
-- Rust: fifteen unit/integration tests; fmt and clippy with warnings denied.
+- Rust: sixteen unit/integration tests; fmt and clippy with warnings denied.
 - Release WinUI build on ARM64; native shell visually inspected in actual VM screenshots.
 - C# ↔ Rust smoke: Unicode paths, actual WAV metadata/tags, folder fidelity, IDs across rescan/restart, external rename/delete, SHA-256 music preservation.
 - Codec integration: generated MP3, FLAC, AAC/M4A, ALAC, Ogg Vorbis and WAV fixtures all index, decode/play and seek successfully on Windows ARM64. Corrupt audio returns an error while previous audio/queue continue. FFmpeg 9.0.2 installed via winget for fixture generation only.
@@ -87,3 +87,9 @@ Schema 6 persists folder presentation overrides. Automatic modes are conservativ
 ABI 4 extends Folder DTO to 56 bytes (kind, direct track count, override). Snapshot remains 112 bytes. Folder/search results are read in SQLite transactions so metadata decoration uses a coherent snapshot. WinUI displays folder type/count, adds a small presentation menu and hides the large album-art header for loose/mixed/container folders and search/playlists. A separate Home and its side section for singles remain later UI work.
 
 Fifteen Rust tests, fmt/clippy with warnings denied, WinUI Release ARM64 and C# ABI tests verify coherent albums, a single tagged song, persistent overrides, folder rename and unchanged music bytes. The new visual/input state has not yet been inspected because the Mac was locked. Keep this distinct from successful compilation/core testing.
+
+## Active research implementation goal
+
+The complete research implementation is tracked in RESEARCH-IMPLEMENTATION.md. P0/P1/P2 decisions, household requirements, nine acceptance scenarios and UI/performance evidence remain in scope; existing narrow checks are not a completion claim.
+
+Queue semantics milestone: successive Play next requests form a FIFO prefix before the original upcoming suffix. Natural/manual advancement consumes that prefix, repeat-one retains it, removing an occurrence adjusts its boundary. Explicit queue jump/Previous/manual reorder/shuffle starts a new request context; Clear and replacement clear the prefix. Duplicate occurrences remain distinct. Double-click/Enter plays only that selected track; explicit folder/playlist/results buttons build their indicated full queues. Sixteen Rust tests and Windows C# ABI/audio checks pass, including FIFO requests while playing. WinUI Release builds; full UI input verification remains pending. Session persistence remains separate work.

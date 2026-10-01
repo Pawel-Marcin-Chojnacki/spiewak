@@ -54,6 +54,9 @@ try
             Assert(core.Queue().Tracks.Count == 2, "Queue contains the whole folder");
             core.Selection(new[] { tracks[1], tracks[0] }, 2); await Wait(() => core.Queue().Tracks.Count == 4, "Insert selection next preserving duplicates");
             Assert(core.Queue().Tracks[2].Id == trackId, "Inserted selection order");
+            core.Selection(new[] { tracks[0] }, 2); await Wait(() => core.Queue().Tracks.Count == 5, "Successive Play next request appended to pending prefix");
+            Assert(core.Queue().Tracks[1].Id == tracks[1].Id && core.Queue().Tracks[3].Id == trackId, "Successive Play next requests remain FIFO");
+            core.Command(10, 3);
             core.Command(10, 2); core.Command(10, 1); await Wait(() => core.Queue().Tracks.Count == 2, "Edit upcoming while audio continues");
             core.Command(7); await Wait(() => (core.Now().Flags & 1) != 0 && core.Now().Playing, "Mute preserves playback"); core.Command(7);
             core.Command(8); await Wait(() => ((core.Now().Flags >> 1) & 3) == 1, "Repeat queue state");
