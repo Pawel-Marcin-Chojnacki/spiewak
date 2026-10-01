@@ -73,7 +73,9 @@ SpiewakMetadataSnapshot *spiewak_metadata_prepare(SpiewakCore *, int64_t track, 
 SpiewakMetadataSnapshot *spiewak_metadata_command(SpiewakCore *, int64_t operation, uint32_t action);
 void spiewak_metadata_free(SpiewakMetadataSnapshot *);
 /* Online lookup defaults off. Artist/title searches are sent only after enabling it.
-   Header and candidate strings belong to the returned snapshot. Flags: title 1, artist 2, duration 4, version 8.
+   Header and candidate strings belong to the returned snapshot. Candidate flags: title 1, artist 2, duration 4, version 8, acoustic match 16.
+   Header enabled is a bitmask: online 1, application key configured 2.
+   Actions: 0 cached, 1 title search, 2 enable, 3 disable, 4 audio identification (local-only without key).
    Search rank is NOT identity confidence; every candidate needs review. */
 typedef struct { int64_t id,track_id; uint32_t flags,score; double duration; const char *title,*artist,*album,*date,*edition,*evidence,*source,*artwork,*recording,*release; } SpiewakCandidate;
 typedef struct { const char *error,*message; uint32_t enabled; const SpiewakCandidate *rows; size_t count; const char *title,*artist; } SpiewakDiscovery;

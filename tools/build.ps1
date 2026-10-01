@@ -21,7 +21,7 @@ try {
  if($LASTEXITCODE -ne 0){throw 'Rust tools installation failed'}
  rustup target add $target
  if($LASTEXITCODE -ne 0){throw 'Rust target installation failed'}
- cargo fmt --check
+ cargo fmt --all --check
  if($LASTEXITCODE -ne 0){throw 'Rust formatting failed'}
  cargo test --workspace --target $target
  if($LASTEXITCODE -ne 0){throw 'Rust tests failed'}

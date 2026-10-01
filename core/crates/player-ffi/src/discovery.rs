@@ -41,7 +41,7 @@ impl DiscoverySnapshot {
     }
     fn records(mut self, discovery: Discovery) -> Self {
         self.message = self.string(&discovery.message);
-        self.enabled = u32::from(discovery.enabled);
+        self.enabled = u32::from(discovery.enabled) | (u32::from(discovery.key_configured) << 1);
         self.title = self.string(&discovery.title);
         self.artist = self.string(&discovery.artist);
         for row in discovery.candidates {
@@ -100,7 +100,7 @@ fn result(action: impl FnOnce() -> Result<Discovery, String>) -> *mut DiscoveryS
     Box::into_raw(Box::new(snapshot))
 }
 /// # Safety
-/// Live core; UTF-8 artist/title for action 1. Actions 0 cached view, 1 search, 2 enable online requests, 3 disable.
+/// Live core; UTF-8 artist/title for action 1. Actions 0 cached view, 1 search, 2 enable online requests, 3 disable, 4 identify audio (local-only without an application key).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spiewak_discovery(
     ptr: *mut Core,
@@ -115,6 +115,7 @@ pub unsafe extern "C" fn spiewak_discovery(
         match action {
             0 => lib.discovery(track),
             1 => lib.discover_metadata(track, unsafe { text(title) }?, unsafe { text(artist) }?),
+            4 => lib.identify_metadata(track),
             2 | 3 => {
                 lib.set_discovery_enabled(action == 2)?;
                 lib.discovery(track)

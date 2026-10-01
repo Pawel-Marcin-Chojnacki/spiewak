@@ -7,7 +7,7 @@ public sealed record MetadataCandidate(long Id, long TrackId, uint Flags, uint S
     public bool VersionCompatible => (Flags & 8) != 0;
     public string Summary => $"{Title} · {Artist}\n{(Album.Length > 0 ? Album : "Recording without a release")} · {Date} · {Edition}\n{(Duration > 0 ? TimeSpan.FromSeconds(Duration).ToString(@"m\:ss") : "Unknown duration")}\n{Evidence}";
 }
-public sealed record Discovery(bool Enabled, string Title, string Artist, string Message, IReadOnlyList<MetadataCandidate> Candidates);
+public sealed record Discovery(bool Enabled, bool KeyConfigured, string Title, string Artist, string Message, IReadOnlyList<MetadataCandidate> Candidates);
 internal static partial class NativeMethods
 {
     [DllImport(Dll, EntryPoint = "spiewak_discovery", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Discovery(CoreHandle core, long track, uint action,
@@ -36,13 +36,14 @@ public sealed partial class Core
                 var row = Marshal.PtrToStructure<CandidateRow>(header.Rows + checked((nint)i * Marshal.SizeOf<CandidateRow>()));
                 candidates.Add(new(row.Id, row.TrackId, row.Flags, row.Score, row.Duration, Text(row.Title), Text(row.Artist), Text(row.Album), Text(row.Date), Text(row.Edition), Text(row.Evidence), Text(row.Source), Text(row.Artwork), Text(row.Recording), Text(row.Release)));
             }
-            return new(header.Enabled != 0, Text(header.Title), Text(header.Artist), Text(header.Message), candidates);
+            return new((header.Enabled & 1) != 0, (header.Enabled & 2) != 0, Text(header.Title), Text(header.Artist), Text(header.Message), candidates);
         }
         finally { NativeMethods.FreeDiscovery(pointer); }
     }
     public Discovery Discovery(long track = 0) => ReadDiscovery(NativeMethods.Discovery(handle, track, 0, "", ""));
     public Discovery SetDiscoveryEnabled(bool enabled) => ReadDiscovery(NativeMethods.Discovery(handle, 0, enabled ? 2u : 3u, "", ""));
     public Discovery DiscoverMetadata(long track, string title, string artist) => ReadDiscovery(NativeMethods.Discovery(handle, track, 1, title, artist));
+    public Discovery IdentifyMetadata(long track) => ReadDiscovery(NativeMethods.Discovery(handle, track, 4, "", ""));
     public IReadOnlyList<MetadataRecord> PrepareDiscovery(long candidate, bool replaceTags = false, bool replaceCover = false)
         => ReadMetadata(NativeMethods.PrepareDiscovery(handle, candidate, replaceTags ? 1u : 0u, replaceCover ? 1u : 0u));
 }

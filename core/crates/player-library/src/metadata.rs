@@ -167,7 +167,7 @@ fn copy_to(source: &mut fs::File, target: &mut fs::File) -> Result<()> {
     target.set_len(length).map_err(|e| e.to_string())?;
     target.sync_all().map_err(|e| e.to_string())
 }
-fn lock(path: &Path, write: bool) -> Result<fs::File> {
+pub(super) fn lock(path: &Path, write: bool) -> Result<fs::File> {
     let meta = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
     if !meta.is_file() || meta.is_symlink() || meta.len() > FILE_LIMIT {
         return Err("Edit a regular audio file of at most 512 MiB.".into());

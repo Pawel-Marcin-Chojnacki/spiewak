@@ -30,9 +30,10 @@ pub struct Candidate {
     pub recording: String,
     pub release: String,
 }
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Discovery {
     pub enabled: bool,
+    pub key_configured: bool,
     pub title: String,
     pub artist: String,
     pub message: String,
@@ -56,6 +57,9 @@ struct Response {
 }
 trait Fetch {
     fn get(&self, url: &str, limit: usize) -> Result<Response>;
+    fn post(&self, _url: &str, _body: &str, _limit: usize) -> Result<Response> {
+        Err("POST is unavailable.".into())
+    }
 }
 struct Online;
 impl Fetch for Online {
@@ -70,43 +74,68 @@ impl Fetch for Online {
         let agent = ureq::Agent::new_with_config(config);
         let mut response = agent.get(url).header("User-Agent", USER_AGENT).header("Accept", "application/json, image/png, image/jpeg").call()
             .map_err(|_| "Provider connection failed or timed out. Cached results and playback are available.".to_owned())?;
-        let status = response.status().as_u16();
-        let location = response
-            .headers()
-            .get("location")
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned);
-        let retry = response
-            .headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse().ok());
-        if response
-            .headers()
-            .get("content-length")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<usize>().ok())
-            .is_some_and(|n| n > limit)
-        {
-            return Err("Provider response exceeds the download limit.".into());
-        }
-        let mut body = Vec::new();
-        response
-            .body_mut()
-            .as_reader()
-            .take(limit as u64 + 1)
-            .read_to_end(&mut body)
-            .map_err(|_| "Provider response could not be read completely.".to_owned())?;
-        if body.len() > limit {
-            return Err("Provider response exceeds the download limit.".into());
-        }
-        Ok(Response {
-            status,
-            body,
-            location,
-            retry,
-        })
+        read_response(&mut response, limit)
     }
+    fn post(&self, url: &str, body: &str, limit: usize) -> Result<Response> {
+        let config = ureq::Agent::config_builder()
+            .https_only(true)
+            .max_redirects(0)
+            .http_status_as_error(false)
+            .timeout_global(Some(Duration::from_secs(15)))
+            .timeout_connect(Some(Duration::from_secs(5)))
+            .build();
+        let mut response = ureq::Agent::new_with_config(config)
+            .post(url)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .send(body)
+            .map_err(|_| {
+                "AcoustID connection failed or timed out. No music was changed.".to_owned()
+            })?;
+        read_response(&mut response, limit)
+    }
+}
+fn read_response(
+    response: &mut ureq::http::Response<ureq::Body>,
+    limit: usize,
+) -> Result<Response> {
+    let status = response.status().as_u16();
+    let location = response
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let retry = response
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok());
+    if response
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok())
+        .is_some_and(|n| n > limit)
+    {
+        return Err("Provider response exceeds the download limit.".into());
+    }
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .as_reader()
+        .take(limit as u64 + 1)
+        .read_to_end(&mut body)
+        .map_err(|_| "Provider response could not be read completely.".to_owned())?;
+    if body.len() > limit {
+        return Err("Provider response exceeds the download limit.".into());
+    }
+    Ok(Response {
+        status,
+        body,
+        location,
+        retry,
+    })
 }
 pub(super) fn migrate(db: &Connection) -> Result<()> {
     db.execute_batch("SAVEPOINT migration;
@@ -121,6 +150,7 @@ pub(super) fn migrate(db: &Connection) -> Result<()> {
 }
 #[cfg(test)]
 pub(super) fn drop_migration(db: &Connection) {
+    super::fingerprint::drop_migration(db);
     db.execute_batch("ALTER TABLE file_operations DROP COLUMN provenance; DROP TABLE provider_settings; DROP TABLE provider_http; DROP TABLE provider_gate; DROP TABLE metadata_candidates;").unwrap();
 }
 fn millis() -> i64 {
@@ -325,45 +355,7 @@ impl Library {
         let mut current = url.to_owned();
         for redirect in 0..=5 {
             let name = host(&current, art)?;
-            // Reserve request starts durably, including between two running player processes.
-            loop {
-                let tx = rusqlite::Transaction::new_unchecked(
-                    &self.db,
-                    rusqlite::TransactionBehavior::Immediate,
-                )
-                .map_err(|e| e.to_string())?;
-                self.db
-                    .execute("INSERT OR IGNORE INTO provider_gate VALUES(?,0)", [&name])
-                    .map_err(|e| e.to_string())?;
-                let next: i64 = self
-                    .db
-                    .query_row(
-                        "SELECT next_request FROM provider_gate WHERE host=?",
-                        [&name],
-                        |r| r.get(0),
-                    )
-                    .map_err(|e| e.to_string())?;
-                let wait = next - millis();
-                if wait > 0 {
-                    drop(tx);
-                    if wait > 2000 {
-                        return Err(format!(
-                            "Provider is backing off; retry in {} seconds. Playback continues.",
-                            (wait + 999) / 1000
-                        ));
-                    }
-                    std::thread::sleep(Duration::from_millis(wait as u64));
-                    continue;
-                }
-                self.db
-                    .execute(
-                        "UPDATE provider_gate SET next_request=? WHERE host=?",
-                        params![millis() + 1100, name],
-                    )
-                    .map_err(|e| e.to_string())?;
-                tx.commit().map_err(|e| e.to_string())?;
-                break;
-            }
+            self.reserve_provider_request(&name)?;
             if !self.discovery_enabled()? {
                 return Err("Online lookup was disabled before this request.".into());
             }
@@ -453,6 +445,48 @@ impl Library {
         }
         Err("Provider redirects did not finish.".into())
     }
+    fn reserve_provider_request(&self, name: &str) -> Result<()> {
+        // Reserve request starts durably, including between two running player processes.
+        loop {
+            let tx = rusqlite::Transaction::new_unchecked(
+                &self.db,
+                rusqlite::TransactionBehavior::Immediate,
+            )
+            .map_err(|e| e.to_string())?;
+            self.db
+                .execute("INSERT OR IGNORE INTO provider_gate VALUES(?,0)", [&name])
+                .map_err(|e| e.to_string())?;
+            let next: i64 = self
+                .db
+                .query_row(
+                    "SELECT next_request FROM provider_gate WHERE host=?",
+                    [&name],
+                    |r| r.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            let wait = next - millis();
+            if wait > 0 {
+                drop(tx);
+                if wait > 2000 {
+                    return Err(format!(
+                        "Provider is backing off; retry in {} seconds. Playback continues.",
+                        (wait + 999) / 1000
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(wait as u64));
+                continue;
+            }
+            self.db
+                .execute(
+                    "UPDATE provider_gate SET next_request=? WHERE host=?",
+                    params![millis() + 1100, name],
+                )
+                .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+            break;
+        }
+        Ok(())
+    }
     fn provider_backoff(&self, name: &str, seconds: u64) -> Result<()> {
         self.db
             .execute(
@@ -485,6 +519,7 @@ impl Library {
         if track == 0 {
             return Ok(Discovery {
                 enabled,
+                key_configured: super::fingerprint::key_configured(),
                 ..Default::default()
             });
         }
@@ -531,6 +566,7 @@ impl Library {
         let candidates=self.db.prepare("SELECT id,track_id,flags,score,duration,title,artist,album,date,edition,evidence,source,artwork,recording,release FROM metadata_candidates WHERE track_id=? ORDER BY score DESC,id LIMIT 40").map_err(|e|e.to_string())?.query_map([track],candidate_row).map_err(|e|e.to_string())?.collect::<std::result::Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
         Ok(Discovery {
             enabled,
+            key_configured: super::fingerprint::key_configured(),
             title,
             artist,
             message: "Candidates need review. Search rank is not a probability of identity.".into(),
@@ -583,101 +619,34 @@ impl Library {
             .get("recordings")
             .and_then(Value::as_array)
             .ok_or("Provider response has no recording list.")?;
-        let mut candidates = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for record in records.iter().take(10) {
-            let recording = text(record, "id");
-            if !mbid(&recording) {
-                continue;
-            }
-            let rtitle = text(record, "title");
-            let rartist = artist(record);
-            if rtitle.is_empty() || rartist.is_empty() {
-                continue;
-            }
-            let duration = record["length"].as_u64().unwrap_or(0).min(86400000) as f64 / 1000.0;
-            let score = record["score"]
-                .as_u64()
-                .or_else(|| record["score"].as_str().and_then(|s| s.parse().ok()))
-                .unwrap_or(0)
-                .min(100) as u32;
-            let disambiguation = text(record, "disambiguation");
-            let releases = array(record, "releases");
-            let choices: Vec<&Value> = if releases.is_empty() {
-                vec![&Value::Null]
-            } else {
-                releases.iter().take(4).collect()
-            };
-            for release in choices {
-                let release_id = text(release, "id");
-                if !release_id.is_empty() && !mbid(&release_id) {
-                    continue;
-                }
-                if !seen.insert((recording.clone(), release_id.clone())) {
-                    continue;
-                }
-                let secondary = array(&release["release-group"], "secondary-types")
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let edition = [
-                    text(release, "country"),
-                    text(release, "status"),
-                    text(release, "disambiguation"),
-                    disambiguation.clone(),
-                    secondary.clone(),
-                ]
-                .into_iter()
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join(" · ");
-                let provider_versions = versions(&format!("{rtitle} {disambiguation} {secondary}"));
-                let version_equal =
-                    versions(&title) == provider_versions && source_versions == provider_versions;
-                let flags = u32::from(normalized(&title) == normalized(&rtitle))
-                    | (u32::from(normalized(&artist_name) == normalized(&rartist)) << 1)
-                    | (u32::from(
-                        source.duration > 0.0
-                            && duration > 0.0
-                            && (source.duration - duration).abs() <= 3.0,
-                    ) << 2)
-                    | (u32::from(version_equal) << 3);
-                let evidence = format!(
-                    "Needs review · title {} · artist {} · duration {} · version {}. MusicBrainz search rank {score}/100 is not identity confidence.",
-                    if flags & 1 != 0 { "matches" } else { "differs" },
-                    if flags & 2 != 0 { "matches" } else { "differs" },
-                    if flags & 4 != 0 {
-                        "within 3s"
-                    } else {
-                        "different/unknown"
-                    },
-                    if version_equal {
-                        "no marker conflict"
-                    } else {
-                        "CONFLICT"
-                    }
-                );
-                candidates.push(Candidate {
-                    track_id: track,
-                    flags,
-                    score,
-                    duration,
-                    title: rtitle.clone(),
-                    artist: rartist.clone(),
-                    album: text(release, "title"),
-                    date: text(release, "date"),
-                    edition,
-                    evidence,
-                    source: format!("https://musicbrainz.org/recording/{recording}"),
-                    recording: recording.clone(),
-                    release: release_id,
-                    ..Default::default()
-                });
-            }
+        let candidates = recording_candidates(
+            records,
+            track,
+            &source,
+            &title,
+            &artist_name,
+            &source_versions,
+        );
+        self.cache_candidates(track, candidates, &hash, &identity, &title, &artist_name)?;
+        let mut result = self.discovery(track)?;
+        result.title = title;
+        result.artist = artist_name;
+        if result.candidates.is_empty() {
+            result.message = "No recording found. Your file stays unchanged and playable.".into();
         }
+        Ok(result)
+    }
+    fn cache_candidates(
+        &self,
+        track: i64,
+        candidates: Vec<Candidate>,
+        hash: &str,
+        identity: &str,
+        title: &str,
+        artist_name: &str,
+    ) -> Result<()> {
         // No cached candidate is usable after a concurrent source change.
-        if self.metadata_origin(track)? != (hash.clone(), identity.clone()) {
+        if self.metadata_origin(track)? != (hash.to_owned(), identity.to_owned()) {
             return Err("File changed during lookup. Search again; no music was changed.".into());
         }
         let tx = rusqlite::Transaction::new_unchecked(
@@ -693,13 +662,7 @@ impl Library {
         }
         self.db.execute("DELETE FROM metadata_candidates WHERE id NOT IN(SELECT id FROM metadata_candidates ORDER BY id DESC LIMIT 5000)",[]).map_err(|e|e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
-        let mut result = self.discovery(track)?;
-        result.title = title;
-        result.artist = artist_name;
-        if result.candidates.is_empty() {
-            result.message = "No recording found. Your file stays unchanged and playable.".into();
-        }
-        Ok(result)
+        Ok(())
     }
     fn candidate_origin(&self, id: i64) -> Result<(String, String, String)> {
         self.db.query_row("SELECT source_hash,source_identity,query_title FROM metadata_candidates WHERE id=?",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|e|e.to_string())
@@ -889,6 +852,304 @@ impl Library {
         )
     }
 }
+impl Library {
+    /// Calculates locally even without a key. Online identification requires explicit online enablement.
+    pub fn identify_metadata(&self, track: i64) -> Result<Discovery> {
+        self.identify_with(
+            track,
+            super::fingerprint::application_key()?.as_deref(),
+            &Online,
+        )
+    }
+    fn identify_with(
+        &self,
+        track: i64,
+        key: Option<&str>,
+        fetch: &impl Fetch,
+    ) -> Result<Discovery> {
+        let (hash, identity) = self.metadata_origin(track)?;
+        let fp = self.audio_fingerprint(track)?;
+        let mut result = self.discovery(track)?;
+        let Some(key) = key else {
+            result.message = format!(
+                "Local fingerprint ready: {} items, {:.1}s. No request was sent. Set SPIEWAK_ACOUSTID_CLIENT_KEY in your Windows environment after registering an AcoustID application; title search remains available.",
+                fp.items, fp.duration
+            );
+            return Ok(result);
+        };
+        if !self.discovery_enabled()? {
+            return Err("Local fingerprint is ready. Enable online lookup before sending its fingerprint and duration to AcoustID.".into());
+        }
+        let reply = {
+            let _network = NETWORK
+                .get_or_init(|| Mutex::new(()))
+                .lock()
+                .map_err(|_| "Provider queue unavailable.")?;
+            self.reserve_provider_request("api.acoustid.org")?;
+            if !self.discovery_enabled()? {
+                return Err("Online lookup was disabled before identification.".into());
+            }
+            // POST only: client credentials never enter URL, durable cache or error messages.
+            let body = format!(
+                "client={}&duration={}&fingerprint={}&meta=recordingids&format=json",
+                encode(key),
+                fp.duration.round() as u64,
+                encode(&fp.encoded)
+            );
+            let reply = fetch.post("https://api.acoustid.org/v2/lookup", &body, JSON_LIMIT);
+            if reply.is_err() {
+                self.provider_backoff("api.acoustid.org", 30)?;
+            }
+            reply?
+        };
+        if reply.body.len() > JSON_LIMIT {
+            return Err("AcoustID response exceeds the download limit.".into());
+        }
+        if [429, 503].contains(&reply.status) {
+            self.provider_backoff(
+                "api.acoustid.org",
+                reply.retry.unwrap_or(60).clamp(30, 86400),
+            )?;
+            return Err(
+                "AcoustID is busy or rate-limited. Try again later; no music was changed.".into(),
+            );
+        }
+        if reply.status != 200 {
+            self.provider_backoff("api.acoustid.org", 30)?;
+            return Err(format!(
+                "AcoustID returned HTTP {}. Check the application key; no music was changed.",
+                reply.status
+            ));
+        }
+        let value: Value = match serde_json::from_slice(&reply.body) {
+            Ok(value) => value,
+            Err(_) => {
+                self.provider_backoff("api.acoustid.org", 30)?;
+                return Err("AcoustID returned malformed identification data.".into());
+            }
+        };
+        // Provider-supplied error strings can echo credentials: report a static message only.
+        if value["status"].as_str() != Some("ok") {
+            self.provider_backoff("api.acoustid.org", 30)?;
+            return Err("AcoustID rejected the identification request. Check the application key and retry later.".into());
+        }
+        let matches = value
+            .get("results")
+            .and_then(Value::as_array)
+            .ok_or("AcoustID response has no result list.")?;
+        let mut source = self.selected_tracks(&[track])?.remove(0);
+        source.duration = fp.duration;
+        let stem = Path::new(&source.path)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        let file_title = stem.split_once(" - ").map(|(_, t)| t).unwrap_or(&stem);
+        let source_versions = versions(&format!("{} {file_title}", result.title));
+        let matched_recordings = matches
+            .iter()
+            .take(10)
+            .filter(|h| {
+                h["score"]
+                    .as_f64()
+                    .is_some_and(|s| s.is_finite() && s > 0.0 && s <= 1.0)
+                    && mbid(&text(h, "id"))
+            })
+            .flat_map(|h| array(h, "recordings").iter().take(4))
+            .map(|r| text(r, "id"))
+            .filter(|id| mbid(id))
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        let mut hits = matches.iter().take(10).collect::<Vec<_>>();
+        hits.sort_by(|a, b| {
+            b["score"]
+                .as_f64()
+                .unwrap_or(0.0)
+                .total_cmp(&a["score"].as_f64().unwrap_or(0.0))
+        });
+        let mut seen = std::collections::HashSet::new();
+        let mut candidates = Vec::new();
+        for hit in hits {
+            let score = hit["score"]
+                .as_f64()
+                .filter(|s| s.is_finite() && (0.0..=1.0).contains(s))
+                .unwrap_or(0.0);
+            if score <= 0.0 {
+                continue;
+            }
+            let acoustid = text(hit, "id");
+            if !mbid(&acoustid) {
+                continue;
+            }
+            for recording in array(hit, "recordings").iter().take(4) {
+                let id = text(recording, "id");
+                if !mbid(&id) || !seen.insert(id.clone()) || seen.len() > 10 {
+                    continue;
+                }
+                let url = format!(
+                    "https://musicbrainz.org/ws/2/recording/{id}?inc=artist-credits%2Breleases%2Brelease-groups&fmt=json"
+                );
+                let Some(record) = self.provider_json(&url, false, fetch)? else {
+                    continue;
+                };
+                if text(&record, "id") != id {
+                    return Err("MusicBrainz returned a different recording. Identification was not applied.".into());
+                }
+                let rows = recording_candidates(
+                    &[record],
+                    track,
+                    &source,
+                    &result.title,
+                    &result.artist,
+                    &source_versions,
+                );
+                for mut row in rows {
+                    row.flags |= 16;
+                    row.score = (score * 100.0).round() as u32;
+                    row.evidence = format!(
+                        "Needs review · AcoustID score {:.3} is a similarity score, not identity certainty · duration {} · version {} · {} recording(s) returned. {} (Chromaprint 1.6.1 TEST2, first 120s; no audio uploaded).",
+                        score,
+                        if row.flags & 4 != 0 {
+                            "within 3s"
+                        } else {
+                            "different/unknown"
+                        },
+                        if row.flags & 8 != 0 {
+                            "no marker conflict"
+                        } else {
+                            "CONFLICT"
+                        },
+                        matched_recordings,
+                        acoustid
+                    );
+                    row.source = format!(
+                        "https://acoustid.org/track/{acoustid} ; https://musicbrainz.org/recording/{id}"
+                    );
+                    candidates.push(row);
+                }
+            }
+        }
+        self.cache_candidates(
+            track,
+            candidates,
+            &hash,
+            &identity,
+            &result.title,
+            &result.artist,
+        )?;
+        result = self.discovery(track)?;
+        result.message = if result.candidates.is_empty() {
+            "No MusicBrainz recording was identified. The file stays unchanged and playable.".into()
+        } else {
+            "Audio identification candidates need review. A fingerprint match does not identify one album edition.".into()
+        };
+        Ok(result)
+    }
+}
+
+fn recording_candidates(
+    records: &[Value],
+    track: i64,
+    source: &Track,
+    title: &str,
+    artist_name: &str,
+    source_versions: &std::collections::BTreeSet<&str>,
+) -> Vec<Candidate> {
+    let mut candidates = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for record in records.iter().take(10) {
+        let recording = text(record, "id");
+        if !mbid(&recording) {
+            continue;
+        }
+        let rtitle = text(record, "title");
+        let rartist = artist(record);
+        if rtitle.is_empty() || rartist.is_empty() {
+            continue;
+        }
+        let duration = record["length"].as_u64().unwrap_or(0).min(86400000) as f64 / 1000.0;
+        let score = record["score"]
+            .as_u64()
+            .or_else(|| record["score"].as_str().and_then(|s| s.parse().ok()))
+            .unwrap_or(0)
+            .min(100) as u32;
+        let disambiguation = text(record, "disambiguation");
+        let releases = array(record, "releases");
+        let choices: Vec<&Value> = if releases.is_empty() {
+            vec![&Value::Null]
+        } else {
+            releases.iter().take(4).collect()
+        };
+        for release in choices {
+            let release_id = text(release, "id");
+            if !release_id.is_empty() && !mbid(&release_id) {
+                continue;
+            }
+            if !seen.insert((recording.clone(), release_id.clone())) {
+                continue;
+            }
+            let secondary = array(&release["release-group"], "secondary-types")
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let edition = [
+                text(release, "country"),
+                text(release, "status"),
+                text(release, "disambiguation"),
+                disambiguation.clone(),
+                secondary.clone(),
+            ]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ");
+            let provider_versions = versions(&format!("{rtitle} {disambiguation} {secondary}"));
+            let version_equal =
+                versions(title) == provider_versions && *source_versions == provider_versions;
+            let flags = u32::from(normalized(title) == normalized(&rtitle))
+                | (u32::from(normalized(artist_name) == normalized(&rartist)) << 1)
+                | (u32::from(
+                    source.duration > 0.0
+                        && duration > 0.0
+                        && (source.duration - duration).abs() <= 3.0,
+                ) << 2)
+                | (u32::from(version_equal) << 3);
+            let evidence = format!(
+                "Needs review · title {} · artist {} · duration {} · version {}. MusicBrainz search rank {score}/100 is not identity confidence.",
+                if flags & 1 != 0 { "matches" } else { "differs" },
+                if flags & 2 != 0 { "matches" } else { "differs" },
+                if flags & 4 != 0 {
+                    "within 3s"
+                } else {
+                    "different/unknown"
+                },
+                if version_equal {
+                    "no marker conflict"
+                } else {
+                    "CONFLICT"
+                }
+            );
+            candidates.push(Candidate {
+                track_id: track,
+                flags,
+                score,
+                duration,
+                title: rtitle.clone(),
+                artist: rartist.clone(),
+                album: text(release, "title"),
+                date: text(release, "date"),
+                edition,
+                evidence,
+                source: format!("https://musicbrainz.org/recording/{recording}"),
+                recording: recording.clone(),
+                release: release_id,
+                ..Default::default()
+            });
+        }
+    }
+    candidates
+}
+
 fn candidate_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Candidate> {
     Ok(Candidate {
         id: r.get(0)?,

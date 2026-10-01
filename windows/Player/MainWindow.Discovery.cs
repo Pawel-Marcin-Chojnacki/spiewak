@@ -20,11 +20,13 @@ public sealed partial class MainWindow
             form.Children.Add(new TextBlock { Text = "Find metadata for this file. Your folders stay in place. Every result needs review before applying.", TextWrapping = TextWrapping.Wrap });
             var online = new CheckBox { Content = "Enable online tag and cover lookup", IsChecked = state.Enabled };
             form.Children.Add(online);
-            form.Children.Add(new TextBlock { Text = "Search sends the artist and title below to MusicBrainz. Covers are downloaded from Cover Art Archive / Internet Archive. Audio files are not uploaded.", TextWrapping = TextWrapping.Wrap, FontSize = 12 });
+            form.Children.Add(new TextBlock { Text = "Search sends the artist and title below to MusicBrainz. Covers are downloaded from Cover Art Archive / Internet Archive. Audio files are not uploaded. Audio identification sends only a fingerprint and duration to AcoustID when online lookup is enabled and an application key is configured.", TextWrapping = TextWrapping.Wrap, FontSize = 12 });
             var title = new TextBox { Header = "Title (keep Live / Remix / Acoustic)", Text = state.Title, MaxLength = 512 };
             var artist = new TextBox { Header = "Artist", Text = state.Artist, MaxLength = 512 };
             form.Children.Add(title); form.Children.Add(artist);
             var search = new Button { Content = "Search recordings", IsEnabled = state.Enabled };
+            var identify = new Button { Content = state.KeyConfigured ? "Identify from audio" : "Calculate local audio fingerprint", IsEnabled = !state.KeyConfigured || state.Enabled };
+            form.Children.Add(new TextBlock { Text = state.KeyConfigured ? "AcoustID application key configured in the Windows environment." : "No AcoustID application key. You can calculate locally now. Later set SPIEWAK_ACOUSTID_CLIENT_KEY in your Windows environment and restart the player. Register an application at acoustid.org; do not paste its key into chat.", TextWrapping = TextWrapping.Wrap, FontSize = 12 });
             var progress = new ProgressBar { IsIndeterminate = true, Visibility = Visibility.Collapsed };
             var status = new TextBlock { Text = state.Message, TextWrapping = TextWrapping.Wrap, FontSize = 12 };
             var error = new InfoBar { Severity = InfoBarSeverity.Error, IsClosable = true };
@@ -32,10 +34,10 @@ public sealed partial class MainWindow
                 ItemTemplate = (DataTemplate)XamlReader.Load("<DataTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'><TextBlock Text='{Binding Summary}' TextWrapping='Wrap' Margin='0,6' MaxWidth='470'/></DataTemplate>") };
             var replaceTags = new CheckBox { Content = "Replace existing tags (otherwise fill empty fields only)" };
             var replaceCover = new CheckBox { Content = "Replace existing artwork (otherwise keep local artwork)" };
-            form.Children.Add(search); form.Children.Add(progress); form.Children.Add(status); form.Children.Add(results); form.Children.Add(replaceTags); form.Children.Add(replaceCover); form.Children.Add(error);
+            form.Children.Add(search); form.Children.Add(identify); form.Children.Add(progress); form.Children.Add(status); form.Children.Add(results); form.Children.Add(replaceTags); form.Children.Add(replaceCover); form.Children.Add(error);
             var dialog = new ContentDialog { XamlRoot = Shell.XamlRoot, RequestedTheme = Shell.ActualTheme, Title = "Find tags and cover", PrimaryButtonText = "Preview this candidate", CloseButtonText = "Close", IsPrimaryButtonEnabled = false, Content = new ScrollViewer { Content = form, MaxHeight = 560 } };
             bool busy = false;
-            void Update() { dialog.IsPrimaryButtonEnabled = !busy && results.SelectedItem is MetadataCandidate { VersionCompatible: true }; search.IsEnabled = !busy && online.IsChecked == true; }
+            void Update() { dialog.IsPrimaryButtonEnabled = !busy && results.SelectedItem is MetadataCandidate { VersionCompatible: true }; search.IsEnabled = !busy && online.IsChecked == true; identify.IsEnabled = !busy && (!state.KeyConfigured || online.IsChecked == true); }
             void Busy(bool value)
             {
                 busy = value; progress.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
@@ -43,6 +45,7 @@ public sealed partial class MainWindow
                 dialog.IsSecondaryButtonEnabled = !value; Update();
             }
             dialog.CloseButtonClick += (_, click) => click.Cancel = busy;
+            dialog.Closing += (_, closing) => closing.Cancel = busy;
             results.SelectionChanged += (_, _) => Update();
             online.Click += async (_, _) =>
             {
@@ -59,6 +62,17 @@ public sealed partial class MainWindow
                 try
                 {
                     var found = await Task.Run(() => core.DiscoverMetadata(track.Id, queryTitle, queryArtist)); if (closed) return;
+                    results.ItemsSource = found.Candidates; status.Text = found.Message;
+                }
+                catch (Exception e) { error.Message = e.Message; error.IsOpen = true; }
+                finally { Busy(false); }
+            };
+            identify.Click += async (_, _) =>
+            {
+                Busy(true); error.IsOpen = false;
+                try
+                {
+                    var found = await Task.Run(() => core.IdentifyMetadata(track.Id)); if (closed) return;
                     results.ItemsSource = found.Candidates; status.Text = found.Message;
                 }
                 catch (Exception e) { error.Message = e.Message; error.IsOpen = true; }

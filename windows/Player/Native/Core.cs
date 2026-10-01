@@ -98,7 +98,7 @@ public sealed partial class Core : IDisposable
     [StructLayout(LayoutKind.Sequential)] private struct PlaylistRow { public long Id; public nint Name; public ulong Count; }
     public Core(string databasePath)
     {
-        if (NativeMethods.Version() != 9 || Marshal.SizeOf<FolderRow>() != 64 || Marshal.SizeOf<TrackRow>() != 104 || Marshal.SizeOf<Header>() != 112 || Marshal.SizeOf<DiscoveryHeader>() != 56 || Marshal.SizeOf<CandidateRow>() != 112 || Marshal.SizeOf<MetadataHeader>() != 24 || Marshal.SizeOf<MetadataRow>() != 72 || Marshal.SizeOf<NativeMethods.MetadataFieldRow>() != 16)
+        if (NativeMethods.Version() != 10 || Marshal.SizeOf<FolderRow>() != 64 || Marshal.SizeOf<TrackRow>() != 104 || Marshal.SizeOf<Header>() != 112 || Marshal.SizeOf<DiscoveryHeader>() != 56 || Marshal.SizeOf<CandidateRow>() != 112 || Marshal.SizeOf<MetadataHeader>() != 24 || Marshal.SizeOf<MetadataRow>() != 72 || Marshal.SizeOf<NativeMethods.MetadataFieldRow>() != 16)
             throw new InvalidOperationException("The native core has an incompatible ABI. Rebuild the application.");
         handle = new CoreHandle(NativeMethods.Open(databasePath));
         if (handle.IsInvalid) throw new IOException($"Cannot open the library at {databasePath}: {Text(NativeMethods.OpenError())}");

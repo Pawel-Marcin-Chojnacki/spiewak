@@ -265,7 +265,7 @@ unsafe fn text<'a>(ptr: *const c_char) -> Result<&'a str, String> {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn spiewak_abi_version() -> u32 {
-    9
+    10
 }
 /// # Safety
 /// `path` must point to a valid NUL-terminated UTF-8 database path during this call.
@@ -929,7 +929,7 @@ mod tests {
     use super::*;
     #[test]
     fn snapshot_layout_and_utf8_ownership() {
-        assert_eq!(spiewak_abi_version(), 9);
+        assert_eq!(spiewak_abi_version(), 10);
         assert_eq!(std::mem::size_of::<FolderDto>(), 64);
         assert_eq!(std::mem::size_of::<TrackDto>(), 104);
         let s = Snapshot::default().tracks(vec![Track {

@@ -149,3 +149,9 @@ Reproduction logs on the VM: `C:\Users\pawel\spiewak-metadata-full-build.log`, `
 ## Metadata discovery milestone
 
 Schema 12 / ABI 9 adds opt-in MusicBrainz recording/edition search and bounded Cover Art Archive downloads, with Needs Review evidence, local tag/artwork precedence, original-version/annotation preservation, stale-file checks and durable provenance. Fifty-four Rust tests plus native C# public-provider/TLS/PNG/Apply/Undo and WASAPI responsiveness checks pass; generated six-codec regression remains green. WinUI discovery/review is connected and builds. Actual dialog gestures remain open; fingerprint recognition, Inbox and automatic application are not implemented. See DISCOVERY.md.
+
+## Acoustic identification milestone
+
+Schema 13 / ABI 10 implements local Chromaprint 1.6.1 in the Rust process, bounded streaming decoding, content/identity/version-bound cache and reviewed AcoustID → MusicBrainz candidates. Lookup uses HTTPS POST and an environment-only application key; without that key local calculation sends no network request. Existing folders, local tags/covers, version labels and original-file Apply/Undo remain authoritative. Fifty-eight Rust tests, fmt/clippy, ARM64 release DLL/WinUI build and full native six-codec/WASAPI/metadata/provider regression pass. Official fpcalc reference vectors agree exactly for WAV/FLAC/MP3/ALAC/Ogg and within the documented decoder fixture tolerance for AAC; original bytes remain unchanged. See FINGERPRINT.md.
+
+The owner has no application key yet. Live AcoustID recognition, actual new dialog gestures, configured Inbox, confidence/automatic application, household acceptance and current-feature x64 validation remain open; their completion is not inferred from fixture tests.

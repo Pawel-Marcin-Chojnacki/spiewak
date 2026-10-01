@@ -425,3 +425,222 @@ fn title_retains_unknown_meaningful_annotations_and_omits_known_suffix_noise() {
     );
     assert_ne!(versions("Song (Club Mix)"), versions("Song"));
 }
+
+struct AcousticFixture {
+    calls: Cell<usize>,
+    body: Value,
+    status: u16,
+    live: bool,
+}
+impl Fetch for AcousticFixture {
+    fn get(&self, url: &str, _: usize) -> Result<Response> {
+        assert!(url.starts_with("https://musicbrainz.org/ws/2/recording/"));
+        self.calls.set(self.calls.get() + 1);
+        Ok(Response { status:200, body:serde_json::to_vec(&json!({"id":RECORD,"title":"Song","length":20000,"disambiguation":if self.live {"live"} else {""},"artist-credit":[{"name":"Artist"}]})).unwrap(),location:None,retry:None })
+    }
+    fn post(&self, url: &str, body: &str, _: usize) -> Result<Response> {
+        assert_eq!(url, "https://api.acoustid.org/v2/lookup");
+        assert!(body.starts_with("client=fixturekey&duration=20&fingerprint=AQ"));
+        assert!(body.contains("meta=recordingids"));
+        self.calls.set(self.calls.get() + 1);
+        Ok(Response {
+            status: self.status,
+            body: serde_json::to_vec(&self.body).unwrap(),
+            location: None,
+            retry: Some(120),
+        })
+    }
+}
+fn acoustic_indexed() -> (PathBuf, Library, Track) {
+    let p = sandbox();
+    let root = p.join("Songs");
+    fs::create_dir(&root).unwrap();
+    let rate = 11025u32;
+    let n = rate * 20;
+    let mut data = Vec::new();
+    data.extend(b"RIFF");
+    data.extend((36 + n * 2).to_le_bytes());
+    data.extend(b"WAVEfmt ");
+    data.extend(16u32.to_le_bytes());
+    data.extend(1u16.to_le_bytes());
+    data.extend(1u16.to_le_bytes());
+    data.extend(rate.to_le_bytes());
+    data.extend((rate * 2).to_le_bytes());
+    data.extend(2u16.to_le_bytes());
+    data.extend(16u16.to_le_bytes());
+    data.extend(b"data");
+    data.extend((n * 2).to_le_bytes());
+    for i in 0..n {
+        let t = i as f64 / rate as f64;
+        let note = 220.0 * 2.0f64.powf((t / 0.4).floor() % 12.0 / 12.0);
+        let sample = ((t * note * std::f64::consts::TAU).sin() * 10000.0) as i16;
+        data.extend(sample.to_le_bytes());
+    }
+    fs::write(root.join("Song.wav"), data).unwrap();
+    let lib = Library::open(&p.join("index.db")).unwrap();
+    lib.add_root(&root).unwrap();
+    let track = lib.search("Song").unwrap().1.remove(0);
+    (p, lib, track)
+}
+#[test]
+fn local_fingerprint_without_key_never_contacts_provider_and_cache_is_content_bound() {
+    let (p, lib, track) = acoustic_indexed();
+    let original = fs::read(&track.path).unwrap();
+    let f = AcousticFixture {
+        calls: Cell::new(0),
+        body: json!({}),
+        status: 200,
+        live: false,
+    };
+    let result = lib.identify_with(track.id, None, &f).unwrap();
+    assert!(result.message.contains("No request was sent"));
+    assert_eq!(f.calls.get(), 0);
+    assert!(!lib.discovery_enabled().unwrap());
+    assert!(
+        lib.identify_with(track.id, Some("fixturekey"), &f)
+            .unwrap_err()
+            .contains("Enable online")
+    );
+    assert_eq!(f.calls.get(), 0);
+    let fp = lib.audio_fingerprint(track.id).unwrap();
+    assert!((fp.duration - 20.0).abs() < 0.001);
+    assert!(fp.items > 100);
+    assert!(!fp.encoded.is_empty());
+    assert_eq!(fs::read(&track.path).unwrap(), original);
+    lib.db
+        .execute("UPDATE fingerprints SET encoded='CACHE-HIT'", [])
+        .unwrap();
+    assert_eq!(
+        lib.audio_fingerprint(track.id).unwrap().encoded,
+        "CACHE-HIT"
+    );
+    let mut changed = original.clone();
+    changed[60] ^= 1;
+    fs::write(&track.path, changed).unwrap();
+    assert_ne!(
+        lib.audio_fingerprint(track.id).unwrap().encoded,
+        "CACHE-HIT"
+    );
+    drop(lib);
+    fs::remove_dir_all(p).unwrap();
+}
+#[test]
+fn acoustic_matches_are_reviewed_and_preserve_versions_source_and_provenance() {
+    let (p, lib, track) = acoustic_indexed();
+    let original = fs::read(&track.path).unwrap();
+    lib.set_discovery_enabled(true).unwrap();
+    let f = AcousticFixture {
+        calls: Cell::new(0),
+        body: json!({"status":"ok","results":[{"id":OTHER,"score":0.98,"recordings":[{"id":RECORD},{"id":"invalid"}]}]}),
+        status: 200,
+        live: false,
+    };
+    let result = lib.identify_with(track.id, Some("fixturekey"), &f).unwrap();
+    assert_eq!(result.candidates.len(), 1);
+    let row = &result.candidates[0];
+    assert_ne!(row.flags & 16, 0);
+    assert_ne!(row.flags & 4, 0);
+    assert_ne!(row.flags & 8, 0);
+    assert_eq!(row.score, 98);
+    assert!(row.evidence.contains("not identity certainty"));
+    assert!(row.source.contains("acoustid.org"));
+    let proposal = lib.proposal_with(row.id, false, false, &f).unwrap();
+    let records = lib.prepare_discovery(proposal).unwrap();
+    assert_eq!(fs::read(&track.path).unwrap(), original);
+    let op = records.last().unwrap().operation_id;
+    lib.apply_metadata(op).unwrap();
+    assert!(
+        lib.metadata_operations().unwrap()[0]
+            .message
+            .contains("AcoustID")
+    );
+    lib.undo_metadata(op).unwrap();
+    assert_eq!(fs::read(&track.path).unwrap(), original);
+    // A live fingerprint result is not allowed to erase the absent/contradictory version marker.
+    lib.db.execute("DELETE FROM provider_http", []).unwrap();
+    lib.db.execute("DELETE FROM provider_gate", []).unwrap();
+    let live = AcousticFixture { live: true, ..f };
+    let rows = lib
+        .identify_with(track.id, Some("fixturekey"), &live)
+        .unwrap()
+        .candidates;
+    assert_eq!(rows[0].flags & 8, 0);
+    assert!(lib.proposal_with(rows[0].id, false, false, &live).is_err());
+    drop(lib);
+    fs::remove_dir_all(p).unwrap();
+}
+#[test]
+fn acoustic_errors_are_static_and_rate_backoff_prevents_repeated_requests() {
+    let (p, lib, track) = acoustic_indexed();
+    lib.set_discovery_enabled(true).unwrap();
+    let f = AcousticFixture {
+        calls: Cell::new(0),
+        body: json!({"status":"error","error":{"message":"fixturekey secret echo"}}),
+        status: 200,
+        live: false,
+    };
+    let e = lib
+        .identify_with(track.id, Some("fixturekey"), &f)
+        .unwrap_err();
+    assert!(!e.contains("fixturekey"));
+    assert!(e.contains("rejected"));
+    assert_eq!(f.calls.get(), 1);
+    assert!(
+        lib.identify_with(track.id, Some("fixturekey"), &f)
+            .unwrap_err()
+            .contains("backing off")
+    );
+    assert_eq!(f.calls.get(), 1);
+    lib.db.execute("DELETE FROM provider_gate", []).unwrap();
+    let f = AcousticFixture { status: 429, ..f };
+    assert!(
+        lib.identify_with(track.id, Some("fixturekey"), &f)
+            .unwrap_err()
+            .contains("rate-limited")
+    );
+    assert_eq!(fs::read(&track.path).unwrap().len(), 44 + 20 * 11025 * 2);
+    drop(lib);
+    fs::remove_dir_all(p).unwrap();
+}
+
+#[test]
+fn acoustic_empty_invalid_and_duplicate_matches_do_not_invent_identity() {
+    let (p, lib, track) = acoustic_indexed();
+    lib.set_discovery_enabled(true).unwrap();
+    let original = fs::read(&track.path).unwrap();
+    let f = AcousticFixture {
+        calls: Cell::new(0),
+        body: json!({"status":"ok","results":[{"id":OTHER,"score":0.2,"recordings":[{"id":RECORD}]},{"id":RELEASE,"score":0.9,"recordings":[{"id":RECORD}]},{"id":"bad-id","score":1.0,"recordings":[{"id":RECORD}]},{"id":OTHER,"score":2.0,"recordings":[{"id":RECORD}]}]}),
+        status: 200,
+        live: false,
+    };
+    let rows = lib
+        .identify_with(track.id, Some("fixturekey"), &f)
+        .unwrap()
+        .candidates;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].score, 90);
+    assert!(rows[0].evidence.contains("1 recording(s) returned"));
+    assert!(rows[0].evidence.contains(RELEASE));
+    assert_eq!(f.calls.get(), 2);
+    lib.db.execute("DELETE FROM provider_gate", []).unwrap();
+    let empty = AcousticFixture {
+        body: json!({"status":"ok","results":[]}),
+        ..f
+    };
+    assert!(
+        lib.identify_with(track.id, Some("fixturekey"), &empty)
+            .unwrap()
+            .candidates
+            .is_empty()
+    );
+    assert!(lib.discovery(track.id).unwrap().candidates.is_empty());
+    assert_eq!(fs::read(&track.path).unwrap(), original);
+    let short = p.join("short.wav");
+    wav(&short);
+    assert!(fingerprint::fingerprint_file(&short).is_err());
+    fs::write(&short, b"broken audio").unwrap();
+    assert!(fingerprint::fingerprint_file(&short).is_err());
+    drop(lib);
+    fs::remove_dir_all(p).unwrap();
+}

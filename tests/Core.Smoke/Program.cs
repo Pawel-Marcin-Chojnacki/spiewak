@@ -32,6 +32,11 @@ try
         await DiscoveryChecks(sandbox, args.Contains("--providers"), args.Contains("--audio"));
         Console.WriteLine("PASS: targeted native metadata discovery checks"); return;
     }
+    if (args.Contains("--fingerprint-only"))
+    {
+        await FingerprintChecks(sandbox, args.Contains("--audio"), Array.IndexOf(args, "--ffmpeg") is var fi && fi >= 0 ? args[fi + 1] : null);
+        Console.WriteLine("PASS: targeted native audio fingerprint checks"); return;
+    }
     long folderId, trackId, playlistId;
     using (var core = new Core(db))
     {
@@ -165,13 +170,14 @@ try
     await ArtworkChecks(sandbox, args.Contains("--audio"), artworkFfmpeg >= 0 ? args[artworkFfmpeg + 1] : null);
     await MetadataChecks(sandbox, args.Contains("--audio"), artworkFfmpeg >= 0 ? args[artworkFfmpeg + 1] : null);
     await DiscoveryChecks(sandbox, args.Contains("--providers"), args.Contains("--audio"));
+    await FingerprintChecks(sandbox, args.Contains("--audio"), artworkFfmpeg >= 0 ? args[artworkFfmpeg + 1] : null);
     Console.WriteLine("PASS: native Rust ↔ C# vertical slice" + (args.Contains("--audio") ? " including Windows audio" : " (audio skipped)"));
 }
 finally { Directory.Delete(sandbox, true); }
 
 static void Assert(bool condition, string label) { if (!condition) throw new Exception("FAIL: " + label); Console.WriteLine("PASS: " + label); }
 static async Task Wait(Func<bool> condition, string label) { for (var i = 0; i < 50; i++) { if (condition()) { Console.WriteLine("PASS: " + label); return; } await Task.Delay(100); } throw new Exception("FAIL: timeout: " + label); }
-static void Wave(string path, double frequency)
+static void Wave(string path, double frequency, int seconds = 8)
 {
     using var stream = new MemoryStream(); using var writer = new BinaryWriter(stream, Encoding.ASCII, true);
     writer.Write(Encoding.ASCII.GetBytes("RIFF")); writer.Write(0); writer.Write(Encoding.ASCII.GetBytes("WAVEfmt ")); writer.Write(16); writer.Write((ushort)1); writer.Write((ushort)1); writer.Write(44100); writer.Write(88200); writer.Write((ushort)2); writer.Write((ushort)16);
@@ -184,8 +190,8 @@ static void Wave(string path, double frequency)
         }
     }
     writer.Write(Encoding.ASCII.GetBytes("LIST")); writer.Write((int)info.Length); writer.Write(info.ToArray());
-    writer.Write(Encoding.ASCII.GetBytes("data")); writer.Write(44100 * 8 * 2);
-    for (int i = 0; i < 44100 * 8; i++) writer.Write((short)(Math.Sin(i * 2 * Math.PI * frequency / 44100) * 500));
+    writer.Write(Encoding.ASCII.GetBytes("data")); writer.Write(44100 * seconds * 2);
+    for (int i = 0; i < 44100 * seconds; i++) writer.Write((short)(Math.Sin(i * 2 * Math.PI * frequency / 44100) * 500));
     stream.Position = 4; writer.Write((int)stream.Length - 8); writer.Flush(); File.WriteAllBytes(path, stream.ToArray());
 }
 
@@ -559,10 +565,10 @@ static async Task DiscoveryChecks(string sandbox, bool online, bool audio)
     using (var core = new Core(db))
     {
         core.AddRoot(root); var folder = core.Folders().Folders.Single(); var track = core.Tracks(folder.Id).Tracks.Single();
-        var cached = core.Discovery(track.Id); Assert(!cached.Enabled && cached.Candidates.Count == 0 && cached.Artist == "Spiewak Sessions", "ABI 9 discovery reads local terms and starts offline");
+        var cached = core.Discovery(track.Id); Assert(!cached.Enabled && cached.Candidates.Count == 0 && cached.Artist == "Spiewak Sessions", "ABI 10 discovery reads local terms and starts offline");
         bool disabled = false; try { core.DiscoverMetadata(track.Id, "What Is Love", "Haddaway"); } catch (InvalidOperationException e) { disabled = e.Message.Contains("disabled"); }
         Assert(disabled && File.ReadAllBytes(path).SequenceEqual(original), "Disabled lookup makes no network request or file write");
-        core.SetDiscoveryEnabled(true); Assert(core.Discovery().Enabled, "Online setting crosses typed ABI 9");
+        core.SetDiscoveryEnabled(true); Assert(core.Discovery().Enabled, "Online setting crosses typed ABI 10");
         core.SetDiscoveryEnabled(false);
         if (online)
         {
@@ -577,7 +583,7 @@ static async Task DiscoveryChecks(string sandbox, bool online, bool audio)
                 polls++; await Task.Delay(400);
             }
             var found = await query;
-            Assert(found.Candidates.Count > 0 && found.Candidates.All(c => c.Evidence.Contains("not identity confidence")), "Live MusicBrainz response supplies reviewed candidates through ABI 9");
+            Assert(found.Candidates.Count > 0 && found.Candidates.All(c => c.Evidence.Contains("not identity confidence")), "Live MusicBrainz response supplies reviewed candidates through ABI 10");
             Assert(File.ReadAllBytes(path).SequenceEqual(original), "Live discovery is read-only");
             var candidate = found.Candidates.First(c => c.VersionCompatible && c.Release.Length > 0);
             var prepared = await Task.Run(() => core.PrepareDiscovery(candidate.Id, true, true)); var op = prepared.Last().OperationId;
@@ -594,4 +600,38 @@ static async Task DiscoveryChecks(string sandbox, bool online, bool audio)
         }
     }
     using (var core = new Core(db)) Assert(!core.Discovery().Enabled, "Discovery opt-in setting persists across restart");
+}
+
+static async Task FingerprintChecks(string sandbox, bool audio, string? ffmpeg)
+{
+    var previousKey = Environment.GetEnvironmentVariable("SPIEWAK_ACOUSTID_CLIENT_KEY");
+    Environment.SetEnvironmentVariable("SPIEWAK_ACOUSTID_CLIENT_KEY", null);
+    try
+    {
+        var root = Path.Combine(sandbox,"Fingerprint"); Directory.CreateDirectory(root);
+        var source=Path.Combine(root,"Unknown download.wav"); Wave(source,250,20);
+        if(ffmpeg is not null)
+            foreach(var (name,codec) in new[]{("Song.mp3","libmp3lame"),("Song.flac","flac"),("Song-aac.m4a","aac"),("Song-alac.m4a","alac"),("Song.ogg","libvorbis")}) ConvertAudio(ffmpeg,source,Path.Combine(root,name),codec);
+        var db=Path.Combine(sandbox,"fingerprint.db");
+        using(var core=new Core(db))
+        {
+            core.AddRoot(root);var folder=core.Folders().Folders.Single();core.SetFolderKind(folder.Id,FolderKind.LooseTracks);
+            var tracks=core.Tracks(folder.Id).Tracks;Assert(!core.Discovery().KeyConfigured,"ABI reports missing application key without exposing credentials");
+            if(audio){core.Play(folder.Id,tracks[0].Id); await Wait(()=>core.Now().Playing && core.Now().Position>.1,"Audio starts before local identification");}
+            foreach(var track in tracks)
+            {
+                var original=SHA256.HashData(File.ReadAllBytes(track.Path));
+                var task=Task.Run(()=>core.IdentifyMetadata(track.Id));
+                while(!task.IsCompleted){var started=DateTime.UtcNow;var now=core.Now();Assert((DateTime.UtcNow-started).TotalSeconds<1 && (!audio || now.Playing),"Fingerprint calculation leaves WASAPI/UI commands responsive");await Task.Delay(20);}
+                var result=await task;Assert(result.Message.Contains("No request was sent") && result.Message.Contains("Local fingerprint ready"),"Local-only fingerprint through typed ABI: "+track.Codec);
+                Assert(SHA256.HashData(File.ReadAllBytes(track.Path)).SequenceEqual(original),"Identification preserves exact source bytes: "+track.Codec);
+                Assert(core.Folder(folder.Id).Folders.Single().Kind==FolderKind.LooseTracks,"Identification respects manual folder presentation");
+            }
+            core.Command(2);
+        }
+        using(var core=new Core(db))
+        { var track=core.Tracks(core.Folders().Folders.Single().Id).Tracks.First();Assert(core.IdentifyMetadata(track.Id).Message.Contains("No request was sent"),"Fingerprint cache works after reopening library"); }
+        Console.WriteLine("Fingerprint: local-only, content-bound cache, "+(ffmpeg is null ? "WAV" : "six codecs")+", exact source hashes and folder policy verified");
+    }
+    finally { Environment.SetEnvironmentVariable("SPIEWAK_ACOUSTID_CLIENT_KEY",previousKey); }
 }

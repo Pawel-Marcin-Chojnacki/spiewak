@@ -5,11 +5,13 @@ use lofty::{
 };
 use player_domain::{Folder, FolderKind, Track};
 mod artwork;
+mod fingerprint;
 mod identity;
 mod listening;
 mod metadata;
 mod monitor;
 mod providers;
+pub use fingerprint::{Fingerprint, fingerprint_file};
 pub use metadata::{MetadataField, MetadataRecord, MetadataValue, OperationState};
 pub use providers::{Candidate, Discovery, DiscoveryProposal};
 mod playlist_files;
@@ -120,7 +122,7 @@ impl Library {
         let schema_version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if schema_version > 12 {
+        if schema_version > 13 {
             return Err("This library cache belongs to a newer version of Spiewak. Update the app before opening it.".into());
         }
         db.busy_timeout(std::time::Duration::from_secs(10))
@@ -214,6 +216,9 @@ impl Library {
         }
         if schema_version < 12 {
             providers::migrate(&db)?;
+        }
+        if schema_version < 13 {
+            fingerprint::migrate(&db)?;
         }
         Ok(Self {
             db,
