@@ -7,14 +7,14 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 - Native WinUI 3 / .NET 10 process loading Rust through typed C ABI.
 - Add library roots; background read-only scanning; SQLite WAL library index and persistent app state with schema version check.
 - Real folder hierarchy, lazy tree children, center subfolder navigation, paged/virtualized track list.
-- Lofty title/artist/album/album-artist/number/year/duration; filename fallback; cover.jpg/folder.jpg/front.jpg/PNG folder covers.
+- Lofty title/artist/album/album-artist/number/year/duration; filename fallback; embedded JPEG/PNG plus folder covers, bounded content-addressed thumbnails and per-track isolation for loose folders.
 - Streaming Rust audio on a dedicated worker; folder queue, play/pause/resume/stop/seek/next/previous/volume.
 - Persistent transport, upcoming queue sidebar, path/album inspector, compact rows, hideable queue, Back, Enter/Space/Alt+Left, basic context menu.
 - Cached startup before background reconciliation; rescan external additions/renames/deletions without changing music.
 
 ## Verification
 
-- Rust: twenty-one unit/integration tests; fmt and clippy with warnings denied.
+- Rust: twenty-seven unit/integration tests; fmt and clippy with warnings denied.
 - Release WinUI build on ARM64; native shell visually inspected in actual VM screenshots.
 - C# ↔ Rust smoke: Unicode paths, actual WAV metadata/tags, folder fidelity, IDs across rescan/restart, external rename/delete, SHA-256 music preservation.
 - Codec integration: generated MP3, FLAC, AAC/M4A, ALAC, Ogg Vorbis and WAV fixtures all index, decode/play and seek successfully on Windows ARM64. Corrupt audio returns an error while previous audio/queue continue. FFmpeg 9.0.2 installed via winget for fixture generation only.
@@ -25,7 +25,7 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 
 - No Opus decoder in pinned Rodio/Symphonia graph. Files are indexed but playback reports an error.
 - Native watcher and stable IDs within one root/volume are implemented. Reconciliation still walks roots in batches; per-event incremental updates, cross-root/cross-volume identity and network performance are open. Conservative folder presentation is implemented; a derived album/artist catalog remains open.
-- No embedded-artwork extraction/cache, tag editing, Smart Inbox, provider integrations or Undo. All file mutation is absent/disabled.
+- Embedded/folder artwork cache is implemented. Tag editing, Smart Inbox, provider integrations and Undo remain open. Source-music mutation is absent/disabled.
 - No gapless guarantee, ReplayGain, output-device selector or global media keys. Mute is implemented.
 - Mixed queues, selection append/play-next, upcoming edits/clear, queue jump, shuffle upcoming, repeat off/queue/track and mute are implemented. Restart restores queue occurrences, cursor/position, volume and repeat/mute paused.
 - Tree expansion/layout/density are not persisted; no resizable left panel. Forward navigation is implemented.
@@ -103,3 +103,11 @@ Rust publishes the complete audio state before acknowledging a command. Successf
 Twenty-one Rust tests, fmt, clippy with warnings denied, WinUI Release ARM64 and C# native tests pass. Tests cover schema 6→7 preserving playlist state, rollback after a simulated mid-queue SQL failure, mixed sources/duplicates, paused settings/cursor restart, preserved FIFO prefix, renamed paths, distinct unavailable entries, real WASAPI resume at the saved position and termination of a child process followed by recovery of the periodic checkpoint. Timing is nominal while playback polling is active and storage is writable; this is not a guarantee against a storage failure or OS suspension.
 
 The latest demo app was launched in the Windows console session and visually inspected through Parallels. Compact folder presentation and the empty transport are visible. The Mac is currently accessible, but guest click and Ctrl+F/type attempts still produced no UI state change. Actual user input and restored transport/volume appearance remain unverified; core tests do not substitute for those gates.
+
+## Local artwork milestone
+
+Schema 8 stores separate embedded-cover references and effective track covers. ABI 5 extends Folder DTO to 64 bytes with its selected header artwork; Track remains 80 bytes and Snapshot 112 bytes. Album/Compilation can share a folder cover; loose/mixed/container folders keep per-track embedded images and a compact header. Manual presentation changes recompute this choice atomically. No music files are written.
+
+The per-database cache accepts bounded JPEG/PNG sources, creates PNG thumbnails up to 512 pixels without enlarging smaller images, deduplicates identical source bytes and limits new storage to 256 MiB. Old generated orphans can be removed after 24 hours while library/session references and unknown files are protected. Cache write/quota/image errors do not mark the filesystem scan incomplete or prevent deleted music from being reconciled. Missing cache files regenerate. See ARTWORK.md for exact limits, retry and unsupported/corrupt-image behavior.
+
+Twenty-seven Rust tests, fmt/clippy, WinUI ARM64 Release and C# native integration pass. Tests include ID3 artwork in WAV and MP3, folder versus single-track isolation through ABI 5, aspect ratio/no enlargement, cover refresh without cutting WASAPI playback, source SHA-256 preservation, storage failure recovery and migration 7→8 retaining session state. Online artwork/tag matching remains unimplemented. Actual bitmap/UI input and large-library performance remain open; the visible shell alone does not pass them.

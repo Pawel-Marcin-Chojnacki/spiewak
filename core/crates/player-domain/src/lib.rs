@@ -28,6 +28,7 @@ pub struct Folder {
     pub has_children: bool,
     pub kind: FolderKind,
     pub override_kind: FolderKind,
+    pub artwork: String,
     pub track_count: u64,
 }
 

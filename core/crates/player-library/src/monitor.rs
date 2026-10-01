@@ -56,7 +56,8 @@ fn relevant_event(event: &notify::Event, database: &std::path::Path) -> bool {
     let db = database.to_string_lossy();
     event.paths.iter().any(|p| {
         let text = p.to_string_lossy();
-        !text.eq_ignore_ascii_case(&db)
+        !p.starts_with(database.with_extension("artwork"))
+            && !text.eq_ignore_ascii_case(&db)
             && !text.eq_ignore_ascii_case(&format!("{db}-wal"))
             && !text.eq_ignore_ascii_case(&format!("{db}-shm"))
             && !p

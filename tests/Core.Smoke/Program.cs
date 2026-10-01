@@ -154,6 +154,8 @@ try
     }
     using (var core = new Core(db)) { Assert(core.Folder(folderId).Folders.Single().Kind == FolderKind.UserCollection, "Folder presentation survives restart"); core.SetFolderKind(folderId, FolderKind.Auto); Assert(core.Folder(folderId).Folders.Single().Kind == FolderKind.LooseTracks, "One remaining tagged song stays a loose track in automatic mode"); Assert(core.Playlists().Playlists.Single().Count == 2, "Playlist survives restart"); core.Rescan(); Assert(core.PlaylistTracks(playlistId).Tracks.Any(t => t.Id == 0), "Unavailable playlist entry remains visible"); Assert(core.Tracks(folderId).Tracks.Count == 1 && core.Tracks(folderId).Tracks[0].Id == trackId, "Cache persists and external delete reconciles after restart"); }
     await SessionChecks(sandbox, dll, args.Contains("--audio"));
+    var artworkFfmpeg = Array.IndexOf(args, "--ffmpeg");
+    await ArtworkChecks(sandbox, args.Contains("--audio"), artworkFfmpeg >= 0 ? args[artworkFfmpeg + 1] : null);
     Console.WriteLine("PASS: native Rust ↔ C# vertical slice" + (args.Contains("--audio") ? " including Windows audio" : " (audio skipped)"));
 }
 finally { Directory.Delete(sandbox, true); }
@@ -181,7 +183,7 @@ static void Wave(string path, double frequency)
 static void ConvertAudio(string ffmpeg, string source, string target, string codec)
 {
     var start = new System.Diagnostics.ProcessStartInfo(ffmpeg) { UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true };
-    foreach (var argument in new[] { "-hide_banner", "-loglevel", "error", "-i", source, "-c:a", codec, target }) start.ArgumentList.Add(argument);
+    foreach (var argument in new[] { "-hide_banner", "-loglevel", "error", "-i", source, "-map", "0:a:0", "-c:a", codec, target }) start.ArgumentList.Add(argument);
     using var process = System.Diagnostics.Process.Start(start) ?? throw new Exception("Cannot start ffmpeg");
     var error = process.StandardError.ReadToEnd(); process.WaitForExit(); if (process.ExitCode != 0) throw new Exception("Fixture conversion failed: " + error);
 }
@@ -264,3 +266,88 @@ static async Task SessionChecks(string sandbox, string dll, bool audio)
     bool detailed = false; try { using var bad = new Core(invalid); } catch (IOException e) { detailed = e.Message.Contains("not a database", StringComparison.OrdinalIgnoreCase); }
     Assert(detailed, "Startup reports actual database error instead of a generic permissions claim");
 }
+
+static async Task ArtworkChecks(string sandbox, bool audio, string? ffmpeg)
+{
+    var root = Path.Combine(sandbox, "Artwork files"); var album = Path.Combine(root, "Album"); var loose = Path.Combine(root, "Loose");
+    Directory.CreateDirectory(album); Directory.CreateDirectory(loose);
+    var red = Png(800, 400, 190, 0, 0); var blue = Png(100, 200, 0, 0, 190); var green = Png(90, 90, 0, 190, 0);
+    var files = new[] { Path.Combine(album, "01 - Album.wav"), Path.Combine(album, "02 - Album.wav"), Path.Combine(loose, "01 - Loose.wav"), Path.Combine(loose, "02 - Loose.wav") };
+    for (int i = 0; i < files.Length; i++) { Wave(files[i], 220 + i * 30); EmbedArtwork(files[i], i % 2 == 0 ? red : blue, (uint)(i % 2 + 1), i < 2 ? "Coherent album" : "Separate release " + i); }
+    var hashes = files.Select(f => SHA256.HashData(File.ReadAllBytes(f))).ToArray();
+    File.WriteAllBytes(Path.Combine(album, "COVER.PNG"), green); File.WriteAllBytes(Path.Combine(loose, "cover.png"), green);
+    var db = Path.Combine(sandbox, "artwork.db");
+    using var core = new Core(db); core.AddRoot(root);
+    var rootId = core.Folders().Folders.Single().Id; var children = core.Folders(rootId).Folders;
+    var albumFolder = children.Single(f => f.Name == "Album"); var looseFolder = children.Single(f => f.Name == "Loose");
+    var albumTracks = core.Tracks(albumFolder.Id).Tracks; var looseTracks = core.Tracks(looseFolder.Id).Tracks;
+    Assert(albumFolder.Kind == FolderKind.Album && File.Exists(albumFolder.Artwork) && albumTracks.All(t => t.Artwork == albumFolder.Artwork), "Folder artwork crosses ABI 5 and is shared only by an album folder");
+    Assert(looseFolder.Kind == FolderKind.LooseTracks && looseFolder.Artwork.Length == 0 && looseTracks[0].Artwork != looseTracks[1].Artwork, "Unrelated songs keep separate embedded artwork instead of their folder cover");
+    Assert(PngSize(looseTracks[0].Artwork) == (512, 256) && PngSize(looseTracks[1].Artwork) == (100, 200), "Cache thumbnails are bounded and preserve aspect ratio");
+    Assert(looseTracks.All(t => t.Artwork.StartsWith(Path.ChangeExtension(db, "artwork"), StringComparison.OrdinalIgnoreCase)), "Artwork is written only under the app database cache directory");
+    core.SetFolderKind(albumFolder.Id, FolderKind.LooseTracks);
+    Assert(core.Folder(albumFolder.Id).Folders.Single().Artwork.Length == 0 && core.Tracks(albumFolder.Id).Tracks[0].Artwork == looseTracks[0].Artwork, "Presentation override restores per-track covers with content deduplication");
+    core.SetFolderKind(albumFolder.Id, FolderKind.Auto);
+    await Wait(() => (core.LibraryState().Flags & 1) != 0, "Artwork roots monitored");
+    if (audio) { core.Command(6, 0.1); core.Command(7); core.Play(albumFolder.Id, albumTracks[0].Id); await Wait(() => core.Now().Playing, "Tagged artwork WAV remains playable"); }
+    var beforePosition = core.Now().Position;
+    File.WriteAllBytes(Path.Combine(album, "COVER.PNG"), Png(90, 90, 190, 190, 0));
+    await Wait(() => core.Folder(albumFolder.Id).Folders.Single().Artwork != albumFolder.Artwork, "External folder-cover edit replaces cache without changing audio tags");
+    core.RefreshQueue();
+    if (audio) { Assert(core.Now().Playing && core.Now().Position >= beforePosition, "Artwork refresh preserves the playing source"); core.Command(2); }
+    File.Delete(looseTracks[0].Artwork); core.Rescan(); Assert(File.Exists(core.Tracks(looseFolder.Id).Tracks[0].Artwork), "Missing thumbnail is rebuilt from embedded artwork");
+    for (int i = 0; i < files.Length; i++) Assert(hashes[i].SequenceEqual(SHA256.HashData(File.ReadAllBytes(files[i]))), "Artwork indexing preserves music bytes " + i);
+    if (ffmpeg is not null)
+    {
+        var singles = Path.Combine(root, "MP3 single"); Directory.CreateDirectory(singles);
+        var mp3 = Path.Combine(singles, "Song.mp3"); ConvertAudio(ffmpeg, files[2], mp3, "libmp3lame"); EmbedArtwork(mp3, blue, 1, "Another tagged release");
+        var bytes = SHA256.HashData(File.ReadAllBytes(mp3)); core.Rescan();
+        var folder = core.Folders(rootId).Folders.Single(f => f.Name == "MP3 single"); var track = core.Tracks(folder.Id).Tracks.Single();
+        Assert(folder.Kind == FolderKind.LooseTracks && folder.Artwork.Length == 0 && track.Artwork == looseTracks[1].Artwork, "A single MP3 keeps its own ID3 artwork without becoming an album");
+        if (audio) { core.Selection(new[] { track }, 0); await Wait(() => core.Now().Playing && core.Now().Position > 0.15, "MP3 with embedded artwork decodes through WASAPI"); core.Command(2); }
+        Assert(bytes.SequenceEqual(SHA256.HashData(File.ReadAllBytes(mp3))), "MP3 artwork extraction preserves the original file");
+    }
+}
+static (int, int) PngSize(string path)
+{
+    var bytes = File.ReadAllBytes(path);
+    return (System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(16, 4)), System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(20, 4)));
+}
+static byte[] Png(int width, int height, byte red, byte green, byte blue)
+{
+    using var result = new MemoryStream(); result.Write(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
+    var header = new byte[13]; System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(header.AsSpan(0, 4), width); System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(header.AsSpan(4, 4), height); header[8] = 8; header[9] = 2;
+    PngChunk(result, "IHDR", header);
+    using var pixels = new MemoryStream(); using (var z = new System.IO.Compression.ZLibStream(pixels, System.IO.Compression.CompressionLevel.Fastest, true))
+    {
+        for (int y = 0; y < height; y++) { z.WriteByte(0); for (int x = 0; x < width; x++) { z.WriteByte(red); z.WriteByte(green); z.WriteByte(blue); } }
+    }
+    PngChunk(result, "IDAT", pixels.ToArray()); PngChunk(result, "IEND", []); return result.ToArray();
+}
+static void PngChunk(Stream stream, string type, byte[] data)
+{
+    var key = Encoding.ASCII.GetBytes(type); var size = new byte[4]; System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(size, data.Length); stream.Write(size); stream.Write(key); stream.Write(data);
+    uint crc = 0xffffffff;
+    foreach (byte value in key.Concat(data)) { crc ^= value; for (int i = 0; i < 8; i++) crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xedb88320 : crc >> 1; }
+    System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(size, ~crc); stream.Write(size);
+}
+static void EmbedArtwork(string path, byte[] png, uint number, string album)
+{
+    using var frames = new MemoryStream();
+    foreach (var (key, value) in new[] { ("TIT2", "Artwork song " + number), ("TPE1", "Fixture artist"), ("TALB", album), ("TRCK", number.ToString()) })
+        Id3Frame(frames, key, new byte[] { 3 }.Concat(Encoding.UTF8.GetBytes(value)).ToArray());
+    Id3Frame(frames, "APIC", new byte[] { 3 }.Concat(Encoding.ASCII.GetBytes("image/png\0")).Concat(new byte[] { 3, 0 }).Concat(png).ToArray());
+    using var id3 = new MemoryStream(); id3.Write(Encoding.ASCII.GetBytes("ID3")); id3.Write(new byte[] { 4, 0, 0 }); id3.Write(SyncSafe((int)frames.Length)); id3.Write(frames.ToArray());
+    var wav = File.ReadAllBytes(path);
+    if (Path.GetExtension(path).Equals(".mp3", StringComparison.OrdinalIgnoreCase))
+    {
+        int offset = 0;
+        if (wav.Length >= 10 && Encoding.ASCII.GetString(wav, 0, 3) == "ID3") offset = 10 + (wav[6] << 21 | wav[7] << 14 | wav[8] << 7 | wav[9]);
+        File.WriteAllBytes(path, id3.ToArray().Concat(wav.Skip(offset)).ToArray()); return;
+    }
+    using var result = new MemoryStream(); using var writer = new BinaryWriter(result, Encoding.ASCII, true);
+    writer.Write(wav); writer.Write(Encoding.ASCII.GetBytes("id3 ")); writer.Write((int)id3.Length); writer.Write(id3.ToArray()); if (id3.Length % 2 != 0) writer.Write((byte)0);
+    result.Position = 4; writer.Write((int)result.Length - 8); writer.Flush(); File.WriteAllBytes(path, result.ToArray());
+}
+static void Id3Frame(Stream stream, string name, byte[] data) { stream.Write(Encoding.ASCII.GetBytes(name)); stream.Write(SyncSafe(data.Length)); stream.Write(new byte[2]); stream.Write(data); }
+static byte[] SyncSafe(int size) => new[] { (byte)((size >> 21) & 127), (byte)((size >> 14) & 127), (byte)((size >> 7) & 127), (byte)(size & 127) };

@@ -111,7 +111,7 @@ public partial class MainWindow : Window
         MoreButton.Visibility = tracks.Count == 500 ? Visibility.Visible : Visibility.Collapsed;
         PlayFolderButton.Content = "▶ Play folder";
         PlayFolderButton.IsEnabled = tracks.Count > 0; BackButton.IsEnabled = history.Count > 0; ForwardButton.IsEnabled = forward.Count > 0;
-        FolderArt.Source = folder.AlbumPresentation ? Image(tracks.FirstOrDefault()?.Artwork, 192) : null;
+        FolderArt.Source = folder.AlbumPresentation ? Image(folder.Artwork, 192) : null;
     }
     private async void ChildFolderClicked(object sender, ItemClickEventArgs args) { if (args.ClickedItem is Folder folder) await TryBrowse(folder); }
     private async void LoadMore(object sender, RoutedEventArgs args)

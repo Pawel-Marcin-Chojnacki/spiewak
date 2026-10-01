@@ -112,7 +112,7 @@ mod tests {
         let playlist = lib
             .playlist_command(0, 0, "Keep my playlist", &[], 0)
             .unwrap();
-        lib.db.execute_batch("DROP TRIGGER session_track_snapshot; DROP TABLE session_items; DROP TABLE playback_session; PRAGMA user_version=6;").unwrap();
+        lib.db.execute_batch("DROP TRIGGER session_track_snapshot; DROP TABLE session_items; DROP TABLE playback_session; ALTER TABLE tracks DROP COLUMN embedded_art; ALTER TABLE tracks DROP COLUMN art_checked; ALTER TABLE folders DROP COLUMN artwork; ALTER TABLE folders DROP COLUMN art_source; PRAGMA user_version=6;").unwrap();
         drop(lib);
         let lib = Library::open(&db).unwrap();
         assert_eq!(lib.playlists().unwrap()[0].id, playlist);

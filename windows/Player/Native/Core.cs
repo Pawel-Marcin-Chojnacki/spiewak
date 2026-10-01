@@ -3,7 +3,7 @@ using Microsoft.Win32.SafeHandles;
 namespace Spiewak.Native;
 
 public enum FolderKind : uint { Auto, Album, Artist, LooseTracks, MixedCollection, Compilation, UserCollection }
-public sealed record Folder(long Id, long Parent, string Name, string Path, bool HasChildren, FolderKind Kind, ulong TrackCount, FolderKind OverrideKind)
+public sealed record Folder(long Id, long Parent, string Name, string Path, bool HasChildren, FolderKind Kind, ulong TrackCount, FolderKind OverrideKind, string Artwork)
 {
     public override string ToString() => Name;
     public string KindLabel => Kind switch { FolderKind.Album => "Album folder", FolderKind.Artist => "Artist folder", FolderKind.LooseTracks => "Loose tracks", FolderKind.MixedCollection => "Mixed folder", FolderKind.Compilation => "Compilation folder", _ => "Folder collection" };
@@ -75,7 +75,7 @@ public sealed class Core : IDisposable
     }
     [StructLayout(LayoutKind.Sequential)]
     private struct FolderRow
-    { public long Id, Parent; public nint Name, Path; public uint HasChildren, Kind; public ulong TrackCount; public uint OverrideKind; }
+    { public long Id, Parent; public nint Name, Path; public uint HasChildren, Kind; public ulong TrackCount; public uint OverrideKind; public nint Artwork; }
     [StructLayout(LayoutKind.Sequential)]
     private struct TrackRow
     {
@@ -85,7 +85,7 @@ public sealed class Core : IDisposable
     [StructLayout(LayoutKind.Sequential)] private struct PlaylistRow { public long Id; public nint Name; public ulong Count; }
     public Core(string databasePath)
     {
-        if (NativeMethods.Version() != 4 || Marshal.SizeOf<FolderRow>() != 56 || Marshal.SizeOf<TrackRow>() != 80 || Marshal.SizeOf<Header>() != 112)
+        if (NativeMethods.Version() != 5 || Marshal.SizeOf<FolderRow>() != 64 || Marshal.SizeOf<TrackRow>() != 80 || Marshal.SizeOf<Header>() != 112)
             throw new InvalidOperationException("The native core has an incompatible ABI. Rebuild the application.");
         handle = new CoreHandle(NativeMethods.Open(databasePath));
         if (handle.IsInvalid) throw new IOException($"Cannot open the library at {databasePath}: {Text(NativeMethods.OpenError())}");
@@ -101,7 +101,7 @@ public sealed class Core : IDisposable
             for (nuint i = 0; i < header.FolderCount; i++)
             {
                 var row = Marshal.PtrToStructure<FolderRow>(header.Folders + checked((nint)i * Marshal.SizeOf<FolderRow>()));
-                folders.Add(new(row.Id, row.Parent, Text(row.Name), Text(row.Path), row.HasChildren != 0, (FolderKind)row.Kind, row.TrackCount, (FolderKind)row.OverrideKind));
+                folders.Add(new(row.Id, row.Parent, Text(row.Name), Text(row.Path), row.HasChildren != 0, (FolderKind)row.Kind, row.TrackCount, (FolderKind)row.OverrideKind, Text(row.Artwork)));
             }
             for (nuint i = 0; i < header.TrackCount; i++)
             {

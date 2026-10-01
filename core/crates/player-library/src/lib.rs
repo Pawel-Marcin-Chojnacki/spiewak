@@ -4,6 +4,7 @@ use lofty::{
     tag::{Accessor, ItemKey},
 };
 use player_domain::{Folder, FolderKind, Track};
+mod artwork;
 mod identity;
 mod monitor;
 mod playlists;
@@ -20,6 +21,7 @@ use std::{
 type Result<T> = std::result::Result<T, String>;
 pub struct Library {
     db: Connection,
+    artwork_dir: PathBuf,
 }
 #[derive(Default, Debug)]
 pub struct ScanReport {
@@ -58,22 +60,8 @@ fn is_audio(path: &Path) -> bool {
         )
     })
 }
-fn artwork(folder: &Path) -> String {
-    for file in [
-        "cover.jpg",
-        "folder.jpg",
-        "front.jpg",
-        "cover.png",
-        "folder.png",
-    ] {
-        let path = folder.join(file);
-        if path.is_file() {
-            return display_path(&path);
-        }
-    }
-    String::new()
-}
-fn read_track(path: &Path, folder_id: i64) -> Track {
+fn read_track(path: &Path, folder_id: i64, cache: &mut artwork::Cache) -> Track {
+    cache.retry = false;
     let mut track = Track {
         folder_id,
         path: display_path(path),
@@ -87,10 +75,21 @@ fn read_track(path: &Path, folder_id: i64) -> Track {
             .unwrap_or_default()
             .to_string_lossy()
             .to_ascii_uppercase(),
-        artwork: artwork(path.parent().unwrap_or(path)),
         ..Default::default()
     };
-    if let Ok(file) = lofty::read_from_path(path) {
+    lofty::config::apply_global_options(
+        lofty::config::GlobalOptions::new()
+            .allocation_limit(8 * 1024 * 1024)
+            .preserve_format_specific_items(false),
+    );
+    let file = lofty::read_from_path(path).or_else(|_| {
+        lofty::probe::Probe::open(path).and_then(|p| {
+            p.options(lofty::config::ParseOptions::new().read_cover_art(false))
+                .read()
+        })
+    });
+    if let Ok(file) = file {
+        track.artwork = cache.embedded(&file);
         track.duration = file.properties().duration().as_secs_f64();
         if let Some(tag) = file.primary_tag().or_else(|| file.first_tag()) {
             if let Some(value) = tag.title().filter(|v| !v.trim().is_empty()) {
@@ -114,7 +113,7 @@ impl Library {
         let schema_version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if schema_version > 7 {
+        if schema_version > 8 {
             return Err("This library cache belongs to a newer version of Spiewak. Update the app before opening it.".into());
         }
         db.busy_timeout(std::time::Duration::from_secs(10))
@@ -186,7 +185,21 @@ impl Library {
               END;
               PRAGMA user_version=7; RELEASE migration;").map_err(|e|e.to_string())?;
         }
-        Ok(Self { db })
+        if schema_version < 8 {
+            db.execute_batch(
+                "SAVEPOINT migration;
+              ALTER TABLE tracks ADD COLUMN embedded_art TEXT NOT NULL DEFAULT '';
+              ALTER TABLE tracks ADD COLUMN art_checked INTEGER NOT NULL DEFAULT 0;
+              ALTER TABLE folders ADD COLUMN artwork TEXT NOT NULL DEFAULT '';
+              ALTER TABLE folders ADD COLUMN art_source TEXT NOT NULL DEFAULT '';
+              PRAGMA user_version=8; RELEASE migration;",
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(Self {
+            db,
+            artwork_dir: path.with_extension("artwork"),
+        })
     }
     pub fn roots(&self) -> Result<Vec<String>> {
         let mut stmt = self
@@ -260,6 +273,9 @@ impl Library {
             .map_err(|e| e.to_string())?;
         let mut pending = vec![(root_path, None)];
         let mut report = ScanReport::default();
+        let mut incomplete = false;
+        let mut cache = artwork::Cache::new(self.artwork_dir.clone());
+        cache.prune(&self.db)?;
         // A savepoint makes reconciliation atomic; WAL readers still see the old complete index.
         self.db
             .execute_batch("SAVEPOINT scan")
@@ -293,9 +309,26 @@ impl Library {
                         r.get(0)
                     })
                     .map_err(|e| e.to_string())?;
+                let previous_art = self
+                    .db
+                    .query_row(
+                        "SELECT artwork,art_source FROM folders WHERE id=?",
+                        [folder_id],
+                        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                    )
+                    .map_err(|e| e.to_string())?;
+                let (cover, source) = cache.folder(&folder, &previous_art);
+                report.changed |= cover != previous_art.0;
+                self.db
+                    .execute(
+                        "UPDATE folders SET artwork=?,art_source=? WHERE id=?",
+                        params![cover, source, folder_id],
+                    )
+                    .map_err(|e| e.to_string())?;
                 let entries = match fs::read_dir(&folder) {
                     Ok(e) => e,
                     Err(e) => {
+                        incomplete = true;
                         report
                             .warnings
                             .push(format!("Cannot read {folder_path}: {e}"));
@@ -306,6 +339,7 @@ impl Library {
                     let entry = match entry {
                         Ok(e) => e,
                         Err(e) => {
+                            incomplete = true;
                             report.warnings.push(e.to_string());
                             continue;
                         }
@@ -314,6 +348,7 @@ impl Library {
                     let meta = match fs::symlink_metadata(&path) {
                         Ok(m) => m,
                         Err(e) => {
+                            incomplete = true;
                             report.warnings.push(e.to_string());
                             continue;
                         }
@@ -329,6 +364,9 @@ impl Library {
                         }
                     }
                     if meta.is_dir() {
+                        if display_path(&path) == display_path(&self.artwork_dir) {
+                            continue;
+                        }
                         pending.push((path, Some(folder_id)));
                         continue;
                     }
@@ -340,36 +378,48 @@ impl Library {
                     let modified = stamp(&meta);
                     let identity = identity::file_identity(&path);
                     self.relocate("tracks", &stored_path, identity.as_deref(), root_id)?;
-                    let old: Option<(i64, i64, String)> = self
+                    let old: Option<(i64, i64, i64, String)> = self
                         .db
                         .query_row(
-                            "SELECT size,modified,artwork FROM tracks WHERE path=?",
+                            "SELECT size,modified,art_checked,embedded_art FROM tracks WHERE path=?",
                             [&stored_path],
-                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
                         )
                         .optional()
                         .map_err(|e| e.to_string())?;
-                    let cover = artwork(&folder);
-                    if old.as_ref().is_some_and(|(size, time, _)| {
-                        *size == meta.len() as i64 && *time == modified
+                    if old.as_ref().is_some_and(|(size, time, checked, art)| {
+                        *size == meta.len() as i64
+                            && *time == modified
+                            && (*checked == 1 || cache.full())
+                            && (art.is_empty() || Path::new(art).is_file())
                     }) {
-                        report.changed |= old.as_ref().is_some_and(|(_, _, art)| art != &cover);
                         self.db
                             .execute(
-                                "UPDATE tracks SET epoch=?,artwork=?,file_identity=? WHERE path=?",
-                                params![epoch, cover, identity, stored_path],
+                                "UPDATE tracks SET epoch=?,file_identity=? WHERE path=?",
+                                params![epoch, identity, stored_path],
                             )
                             .map_err(|e| e.to_string())?;
                         continue;
                     }
-                    report.changed = true;
-                    let t = read_track(&path, folder_id);
+                    report.changed |= old.as_ref().is_none_or(|(size, time, _, art)| {
+                        *size != meta.len() as i64
+                            || *time != modified
+                            || !art.is_empty() && !Path::new(art).is_file()
+                    });
+                    let t = read_track(&path, folder_id, &mut cache);
+                    report.changed |= old.as_ref().is_none_or(|(_, _, _, art)| art != &t.artwork);
                     let id = self.row_id("tracks", &stored_path)?;
                     self.db.execute("INSERT INTO tracks(id,folder_id,path,title,artist,album,album_artist,artwork,codec,duration,number,year,size,modified,epoch,file_identity) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET folder_id=excluded.folder_id,title=excluded.title,artist=excluded.artist,album=excluded.album,album_artist=excluded.album_artist,artwork=excluded.artwork,codec=excluded.codec,duration=excluded.duration,number=excluded.number,year=excluded.year,size=excluded.size,modified=excluded.modified,epoch=excluded.epoch,file_identity=excluded.file_identity",params![id,t.folder_id,t.path,t.title,t.artist,t.album,t.album_artist,t.artwork,t.codec,t.duration,t.number,t.year,meta.len() as i64,modified,epoch,identity]).map_err(|e|e.to_string())?;
+                    self.db
+                        .execute(
+                            "UPDATE tracks SET embedded_art=?,art_checked=? WHERE id=?",
+                            params![t.artwork, i32::from(!cache.retry), id],
+                        )
+                        .map_err(|e| e.to_string())?;
                 }
             }
             // A partially unreadable root must not make cached tracks disappear.
-            if report.warnings.is_empty() {
+            if !incomplete {
                 report.changed |= self.db.execute("DELETE FROM tracks WHERE epoch!=? AND folder_id IN (SELECT id FROM folders WHERE root_id=?)",params![epoch,root_id]).map_err(|e|e.to_string())? > 0;
                 report.changed |= self
                     .db
@@ -380,8 +430,26 @@ impl Library {
                     .map_err(|e| e.to_string())?
                     > 0;
             }
+            let mut stmt = self
+                .db
+                .prepare("SELECT id FROM folders WHERE root_id=?")
+                .map_err(|e| e.to_string())?;
+            let ids = stmt
+                .query_map([root_id], |r| r.get::<_, i64>(0))
+                .map_err(|e| e.to_string())?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            for id in ids {
+                if let Some(folder) = self.folder_current(id)? {
+                    report.changed |= self.apply_artwork(
+                        id,
+                        matches!(folder.kind, FolderKind::Album | FolderKind::Compilation),
+                    )?;
+                }
+            }
             Ok(())
         })();
+        report.warnings.extend(cache.warnings);
         match result {
             Ok(()) => self.db.execute_batch("RELEASE scan"),
             Err(e) => {
@@ -483,6 +551,12 @@ impl Library {
     }
     pub fn folder(&self, id: i64) -> Result<Option<Folder>> {
         let tx = self.db.unchecked_transaction().map_err(|e| e.to_string())?;
+        let result = self.folder_current(id)?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(result)
+    }
+    // Caller owns the read/write transaction (also used inside a scan savepoint).
+    fn folder_current(&self, id: i64) -> Result<Option<Folder>> {
         let folder = self.db.query_row("SELECT f.id,coalesce(f.parent_id,0),f.name,f.path,EXISTS(SELECT 1 FROM folders c WHERE c.parent_id=f.id) FROM folders f WHERE f.id=?", [id], folder_row).optional().map_err(|e|e.to_string())?;
         let result = folder
             .map(|f| {
@@ -490,7 +564,6 @@ impl Library {
                     .map(|mut rows| rows.remove(0))
             })
             .transpose()?;
-        tx.commit().map_err(|e| e.to_string())?;
         Ok(result)
     }
     pub fn selected_tracks(&self, ids: &[i64]) -> Result<Vec<Track>> {
@@ -597,6 +670,7 @@ fn folder_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Folder> {
         has_children: r.get(4)?,
         kind: FolderKind::Auto,
         override_kind: FolderKind::Auto,
+        artwork: String::new(),
         track_count: 0,
     })
 }

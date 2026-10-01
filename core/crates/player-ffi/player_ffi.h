@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 typedef struct SpiewakCore SpiewakCore;
-typedef struct { int64_t id, parent; const char *name, *path; uint32_t has_children, kind; uint64_t track_count; uint32_t override_kind; } SpiewakFolder;
+typedef struct { int64_t id, parent; const char *name, *path; uint32_t has_children, kind; uint64_t track_count; uint32_t override_kind; const char *artwork; } SpiewakFolder;
 typedef struct { int64_t id, folder; const char *title, *artist, *album, *path, *artwork, *codec; double duration; uint32_t number, year; } SpiewakTrack;
 typedef struct { int64_t id; const char *name; uint64_t count; } SpiewakPlaylist;
 /* Read-only header of a larger owned allocation. Never allocate this yourself. */

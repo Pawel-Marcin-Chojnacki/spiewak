@@ -34,11 +34,15 @@ impl Library {
             } else {
                 folder.override_kind
             };
+            if matches!(folder.kind, FolderKind::Album | FolderKind::Compilation) {
+                folder.artwork = self.db.query_row("SELECT CASE WHEN artwork!='' THEN artwork ELSE coalesce((SELECT embedded_art FROM tracks WHERE folder_id=folders.id AND embedded_art!='' ORDER BY number,title,id LIMIT 1),'') END FROM folders WHERE id=?",[folder.id],|r|r.get(0)).map_err(|e|e.to_string())?;
+            }
         }
         Ok(folders)
     }
     pub fn set_folder_kind(&self, id: i64, value: u32) -> Result<Folder> {
         let kind = FolderKind::from_value(value)?;
+        let tx = self.db.unchecked_transaction().map_err(|e| e.to_string())?;
         let changed = self
             .db
             .execute(
@@ -49,7 +53,14 @@ impl Library {
         if changed != 1 {
             return Err("This folder is no longer in the library.".into());
         }
-        self.folder(id)?
-            .ok_or_else(|| "This folder is no longer in the library.".into())
+        let folder = self
+            .folder_current(id)?
+            .ok_or_else(|| "This folder is no longer in the library.".to_owned())?;
+        self.apply_artwork(
+            id,
+            matches!(folder.kind, FolderKind::Album | FolderKind::Compilation),
+        )?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(folder)
     }
 }
