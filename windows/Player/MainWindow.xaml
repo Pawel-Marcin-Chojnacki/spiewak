@@ -4,7 +4,7 @@
  xmlns:native="using:Spiewak.Native">
 <Grid x:Name="Shell" RequestedTheme="Dark" Background="{ThemeResource AppCanvas}" Loaded="OnLoaded">
  <Grid.KeyboardAccelerators>
-  <KeyboardAccelerator Key="Space" Invoked="ToggleShortcut" />
+  <KeyboardAccelerator Key="Space" Invoked="ToggleShortcut" /><KeyboardAccelerator Key="D" Modifiers="Control" Invoked="FavoriteShortcut"/>
   <KeyboardAccelerator Key="Left" Modifiers="Menu" Invoked="BackShortcut"/><KeyboardAccelerator Key="Right" Modifiers="Menu" Invoked="ForwardShortcut"/><KeyboardAccelerator Key="F" Modifiers="Control" Invoked="SearchShortcut"/>
  </Grid.KeyboardAccelerators>
  <Grid.RowDefinitions><RowDefinition Height="56"/><RowDefinition Height="*"/><RowDefinition Height="112"/></Grid.RowDefinitions>
@@ -21,12 +21,13 @@
  <Grid Grid.Row="1">
   <Grid.ColumnDefinitions><ColumnDefinition Width="238"/><ColumnDefinition Width="*"/><ColumnDefinition x:Name="QueueColumn" Width="272"/></Grid.ColumnDefinitions>
   <Border BorderBrush="{ThemeResource AppLine}" BorderThickness="0,0,1,0" Background="{ThemeResource AppPanel}">
-   <Grid Padding="12,20,12,12"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+   <Grid Padding="12,20,12,12"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <StackPanel Spacing="12" Margin="8,0,8,18"><TextBlock Text="LIBRARY" FontSize="11" FontWeight="SemiBold" CharacterSpacing="120" Foreground="{ThemeResource AppMuted}"/><TextBlock Text="Folders" FontSize="18" FontWeight="SemiBold"/></StackPanel>
     <Button Grid.Row="1" x:Name="AddButton" Content="＋ Add music folder" HorizontalAlignment="Stretch" Click="AddFolder" Margin="0,0,0,12"/>
-    <TreeView Grid.Row="2" x:Name="FolderTree" SelectionMode="Single" ItemInvoked="FolderInvoked" Expanding="FolderExpanding" AutomationProperties.Name="Music folders"/>
-    <StackPanel Grid.Row="3" Spacing="8" Margin="0,12,0,16"><Grid><TextBlock Text="PLAYLISTS" FontSize="11" Foreground="{ThemeResource AppMuted}"/><Button HorizontalAlignment="Right" Content="＋" Click="CreatePlaylist" AutomationProperties.Name="Create playlist"/></Grid><Button x:Name="RestorePlaylistButton" Content="Restore deleted playlist" Click="RestorePlaylist" Visibility="Collapsed"/><ListView x:Name="PlaylistList" MaxHeight="150" IsItemClickEnabled="True" ItemClick="PlaylistClicked" AutomationProperties.Name="Playlists"><ListView.ContextFlyout><MenuFlyout><MenuFlyoutItem Text="Rename" Click="RenamePlaylist"/><MenuFlyoutItem Text="Delete playlist" Click="DeletePlaylist"/></MenuFlyout></ListView.ContextFlyout></ListView></StackPanel>
-    <StackPanel Grid.Row="4" Spacing="8"><ProgressBar x:Name="ScanProgress" IsIndeterminate="True" Visibility="Collapsed"/><Button x:Name="RescanButton" Content="Rescan library" Click="Rescan" HorizontalAlignment="Stretch"/><TextBlock x:Name="LibraryStatus" Text="Ready" FontSize="11" TextWrapping="Wrap" Foreground="{ThemeResource AppMuted}"/></StackPanel>
+    <StackPanel Grid.Row="2" Spacing="2" Margin="0,0,0,12"><Button Content="♥ Favorites" Tag="0" Click="ListeningClicked" HorizontalAlignment="Stretch"/><Button Content="Recently added" Tag="1" Click="ListeningClicked" HorizontalAlignment="Stretch"/><Button Content="Listening history" Tag="2" Click="ListeningClicked" HorizontalAlignment="Stretch"/></StackPanel>
+    <TreeView Grid.Row="3" x:Name="FolderTree" SelectionMode="Single" ItemInvoked="FolderInvoked" Expanding="FolderExpanding" AutomationProperties.Name="Music folders"/>
+    <StackPanel Grid.Row="4" Spacing="8" Margin="0,12,0,16"><Grid><TextBlock Text="PLAYLISTS" FontSize="11" Foreground="{ThemeResource AppMuted}"/><Button HorizontalAlignment="Right" Content="＋" Click="CreatePlaylist" AutomationProperties.Name="Create playlist"/></Grid><Button x:Name="RestorePlaylistButton" Content="Restore deleted playlist" Click="RestorePlaylist" Visibility="Collapsed"/><ListView x:Name="PlaylistList" MaxHeight="150" IsItemClickEnabled="True" ItemClick="PlaylistClicked" AutomationProperties.Name="Playlists"><ListView.ContextFlyout><MenuFlyout><MenuFlyoutItem Text="Rename" Click="RenamePlaylist"/><MenuFlyoutItem Text="Delete playlist" Click="DeletePlaylist"/></MenuFlyout></ListView.ContextFlyout></ListView></StackPanel>
+    <StackPanel Grid.Row="5" Spacing="8"><ProgressBar x:Name="ScanProgress" IsIndeterminate="True" Visibility="Collapsed"/><Button x:Name="RescanButton" Content="Rescan library" Click="Rescan" HorizontalAlignment="Stretch"/><TextBlock x:Name="LibraryStatus" Text="Ready" FontSize="11" TextWrapping="Wrap" Foreground="{ThemeResource AppMuted}"/></StackPanel>
    </Grid>
   </Border>
   <Grid Grid.Column="1" Padding="24,18,24,8" RowSpacing="14">
@@ -51,11 +52,11 @@
      <ListView.ItemTemplate><DataTemplate x:DataType="native:Track">
       <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="32"/><ColumnDefinition Width="*"/><ColumnDefinition Width="160"/><ColumnDefinition Width="54"/><ColumnDefinition Width="48"/></Grid.ColumnDefinitions>
        <TextBlock Text="{x:Bind TrackNumber}" VerticalAlignment="Center" FontSize="12" Foreground="{ThemeResource AppMuted}"/>
-       <StackPanel Grid.Column="1" Spacing="2"><TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis"/><TextBlock Text="{x:Bind FileName}" FontSize="11" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource AppMuted}"/></StackPanel>
+       <StackPanel Grid.Column="1" Spacing="2"><TextBlock Text="{x:Bind DisplayTitle}" TextTrimming="CharacterEllipsis"/><TextBlock Text="{x:Bind FileName}" FontSize="11" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource AppMuted}"/></StackPanel>
        <TextBlock Grid.Column="2" Text="{x:Bind ArtistLabel}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Foreground="{ThemeResource AppMuted}"/><TextBlock Grid.Column="3" Text="{x:Bind Codec}" VerticalAlignment="Center" FontSize="11" Foreground="{ThemeResource AppMuted}"/><TextBlock Grid.Column="4" Text="{x:Bind Time}" HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="12"/>
       </Grid>
      </DataTemplate></ListView.ItemTemplate>
-     <ListView.ContextFlyout><MenuFlyout><MenuFlyoutItem Text="Play selection" Click="PlaySelected"/><MenuFlyoutItem Text="Play next" Click="AddNext"/><MenuFlyoutItem Text="Add to queue" Click="AddToQueue"/><MenuFlyoutSubItem x:Name="AddToPlaylistMenu" Text="Add to playlist"/><MenuFlyoutSeparator/><MenuFlyoutItem Text="Show in Explorer" Click="ShowSelected"/></MenuFlyout></ListView.ContextFlyout>
+     <ListView.ContextFlyout><MenuFlyout><MenuFlyoutItem Text="Play selection" Click="PlaySelected"/><MenuFlyoutItem Text="Play next" Click="AddNext"/><MenuFlyoutItem Text="Add to queue" Click="AddToQueue"/><MenuFlyoutSubItem x:Name="AddToPlaylistMenu" Text="Add to playlist"/><MenuFlyoutSeparator/><MenuFlyoutItem Text="Toggle favorite (Ctrl+D)" Click="ToggleSelectedFavorite"/><MenuFlyoutItem Text="Show in Explorer" Click="ShowSelected"/></MenuFlyout></ListView.ContextFlyout>
     </ListView>
     <TextBlock x:Name="EmptyState" Text="Your collection starts with a folder." HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource AppMuted}" TextWrapping="Wrap"/>
    </Grid>
@@ -69,7 +70,7 @@
     </ListView>
     <StackPanel Grid.Row="2" Spacing="8">
      <StackPanel Orientation="Horizontal" Spacing="4"><Button Content="↑" Click="MoveQueueUp" AutomationProperties.Name="Move queue item up"/><Button Content="↓" Click="MoveQueueDown" AutomationProperties.Name="Move queue item down"/><Button Content="−" Click="RemoveQueue" AutomationProperties.Name="Remove from queue"/><Button Content="Clear" Click="ClearQueue" ToolTipService.ToolTip="Clear upcoming tracks"/></StackPanel>
-     <Button Content="Save queue as playlist" Click="SaveQueue" HorizontalAlignment="Stretch"/><TextBlock Text="FILE" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource AppMuted}"/><TextBlock x:Name="InspectorPath" Text="Select a track to inspect its location." FontSize="11" TextWrapping="Wrap" IsTextSelectionEnabled="True" Foreground="{ThemeResource AppMuted}"/><TextBlock x:Name="InspectorAlbum" FontSize="11" TextWrapping="Wrap" Foreground="{ThemeResource AppMuted}"/></StackPanel>
+     <Button x:Name="SelectedFavoriteButton" Content="♥ Add to favorites" Click="ToggleSelectedFavorite" IsEnabled="False" AutomationProperties.Name="Toggle selected tracks as favorites" ToolTipService.ToolTip="Selected tracks · Ctrl+D"/><Button Content="Save queue as playlist" Click="SaveQueue" HorizontalAlignment="Stretch"/><TextBlock Text="FILE" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource AppMuted}"/><TextBlock x:Name="InspectorPath" Text="Select a track to inspect its location." FontSize="11" TextWrapping="Wrap" IsTextSelectionEnabled="True" Foreground="{ThemeResource AppMuted}"/><TextBlock x:Name="InspectorAlbum" FontSize="11" TextWrapping="Wrap" Foreground="{ThemeResource AppMuted}"/></StackPanel>
    </Grid>
   </Border>
  </Grid>
@@ -81,7 +82,7 @@
    </Grid>
    <StackPanel Grid.Column="1" Spacing="0" VerticalAlignment="Center">
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8">
-     <Button Style="{StaticResource TransportButton}" Click="ShuffleQueue" AutomationProperties.Name="Shuffle upcoming tracks" ToolTipService.ToolTip="Shuffle upcoming"><FontIcon Glyph="&#xE8B1;" FontSize="16"/></Button>
+     <Button x:Name="PlayingFavoriteButton" Content="♡" Click="TogglePlayingFavorite" IsEnabled="False" Style="{StaticResource TransportButton}" AutomationProperties.Name="Favorite current track" ToolTipService.ToolTip="Favorite current track"/><Button Style="{StaticResource TransportButton}" Click="ShuffleQueue" AutomationProperties.Name="Shuffle upcoming tracks" ToolTipService.ToolTip="Shuffle upcoming"><FontIcon Glyph="&#xE8B1;" FontSize="16"/></Button>
      <Button Style="{StaticResource TransportButton}" Click="Previous" AutomationProperties.Name="Previous track" ToolTipService.ToolTip="Previous"><FontIcon Glyph="&#xE892;" FontSize="16"/></Button>
      <Button Background="{ThemeResource AppAccent}" Foreground="#191C24" Width="44" Height="40" CornerRadius="20" Click="TogglePlayback" AutomationProperties.Name="Play or pause" ToolTipService.ToolTip="Play / pause (Space)"><FontIcon x:Name="PlayIcon" Glyph="&#xE768;" FontSize="18"/></Button>
      <Button Style="{StaticResource TransportButton}" Click="Next" AutomationProperties.Name="Next track" ToolTipService.ToolTip="Next"><FontIcon Glyph="&#xE893;" FontSize="16"/></Button>

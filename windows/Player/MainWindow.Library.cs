@@ -35,12 +35,13 @@ public partial class MainWindow
     private async Task RefreshLibraryView()
     {
         if (core is null) return;
-        var version = navigationVersion; var folder = currentFolder; var playlist = currentPlaylist;
-        var selected = TrackList.SelectedItems.Cast<Track>().Select(t => t.Id).ToHashSet();
+        var version = navigationVersion; var folder = currentFolder; var playlist = currentPlaylist; var listening = currentListening;
+        var selected = TrackList.SelectedItems.Cast<Track>().Select(t => t.ReferenceId).ToHashSet();
         var selectedOccurrences = tracks.Select((t,i) => (t,i)).Where(row => TrackList.SelectedItems.Contains(row.t)).Select(row => row.i).ToHashSet();
         await Task.Run(() => core.RefreshQueue()); await ReloadTree(); await ReloadPlaylists();
         if (closed || version != navigationVersion) return;
         if (SearchBox.Text.Trim().Length > 0) await RunSearch();
+        else if (listening >= 0) await ShowListening((uint)listening);
         else if (playlist != 0) await ShowPlaylist(playlist);
         else
         {
@@ -54,8 +55,8 @@ public partial class MainWindow
                 if (roots.Folders.FirstOrDefault() is Folder root) await Browse(root, false);
             }
         }
-        if (!closed && playlist == currentPlaylist && (folder?.Id ?? 0) == (currentFolder?.Id ?? 0))
+        if (!closed && listening != 2 && listening == currentListening && playlist == currentPlaylist && (folder?.Id ?? 0) == (currentFolder?.Id ?? 0))
             for (var i = 0; i < tracks.Count; i++)
-                if (playlist != 0 ? selectedOccurrences.Contains(i) : selected.Contains(tracks[i].Id)) TrackList.SelectedItems.Add(tracks[i]);
+                if (playlist != 0 ? selectedOccurrences.Contains(i) : selected.Contains(tracks[i].ReferenceId)) TrackList.SelectedItems.Add(tracks[i]);
     }
 }

@@ -8,7 +8,7 @@ impl Library {
             tx.commit().map_err(|e| e.to_string())?;
             return Ok(Session::default());
         };
-        let mut stmt = self.db.prepare("SELECT coalesce(t.id,0),coalesce(t.folder_id,0),coalesce(t.path,i.path),coalesce(t.title,'Unavailable · '||i.title),coalesce(t.artist,i.artist),coalesce(t.album,i.album),coalesce(t.album_artist,i.album_artist),coalesce(t.artwork,i.artwork),coalesce(t.codec,i.codec),coalesce(t.duration,i.duration),coalesce(t.number,i.number),coalesce(t.year,i.year) FROM session_items i LEFT JOIN tracks t ON t.id=i.track_id ORDER BY i.position").map_err(|e|e.to_string())?;
+        let mut stmt = self.db.prepare("SELECT coalesce(t.id,0),coalesce(t.folder_id,0),coalesce(t.path,i.path),coalesce(t.title,'Unavailable · '||i.title),coalesce(t.artist,i.artist),coalesce(t.album,i.album),coalesce(t.album_artist,i.album_artist),coalesce(t.artwork,i.artwork),coalesce(t.codec,i.codec),coalesce(t.duration,i.duration),coalesce(t.number,i.number),coalesce(t.year,i.year),EXISTS(SELECT 1 FROM favorites f WHERE f.original_id=t.id),coalesce(t.id,0),coalesce(t.added_at,0) FROM session_items i LEFT JOIN tracks t ON t.id=i.track_id ORDER BY i.position").map_err(|e|e.to_string())?;
         let rows = stmt
             .query_map([], track_row)
             .map_err(|e| e.to_string())?
@@ -112,6 +112,7 @@ mod tests {
         let playlist = lib
             .playlist_command(0, 0, "Keep my playlist", &[], 0)
             .unwrap();
+        super::super::listening::drop_migration(&lib.db);
         lib.db.execute_batch("DROP TRIGGER session_track_snapshot; DROP TABLE session_items; DROP TABLE playback_session; ALTER TABLE tracks DROP COLUMN embedded_art; ALTER TABLE tracks DROP COLUMN art_checked; ALTER TABLE folders DROP COLUMN artwork; ALTER TABLE folders DROP COLUMN art_source; PRAGMA user_version=6;").unwrap();
         drop(lib);
         let lib = Library::open(&db).unwrap();

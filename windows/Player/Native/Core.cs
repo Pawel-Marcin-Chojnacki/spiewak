@@ -11,12 +11,17 @@ public sealed record Folder(long Id, long Parent, string Name, string Path, bool
     public bool AlbumPresentation => Kind is FolderKind.Album or FolderKind.Compilation;
 }
 public sealed class Track(long id, long folder, string title, string artist, string album, string path,
-    string artwork, string codec, double duration, uint number, uint year)
+    string artwork, string codec, double duration, uint number, uint year, bool favorite, long referenceId, long eventTime)
 {
     public long Id { get; } = id; public long Folder { get; } = folder;
     public string Title { get; } = title; public string Artist { get; } = artist; public string Album { get; } = album;
     public string Path { get; } = path; public string Artwork { get; } = artwork; public string Codec { get; } = codec;
     public double Duration { get; } = duration; public uint Number { get; } = number; public uint Year { get; } = year;
+    public bool Favorite { get; } = favorite;
+    public long ReferenceId { get; } = referenceId;
+    public long EventTime { get; } = eventTime;
+    public string DisplayTitle => (Favorite ? "♥ " : "") + Title;
+    public string LibraryTime => EventTime > 0 ? DateTimeOffset.FromUnixTimeSeconds(EventTime).ToLocalTime().ToString("g") : "";
     public string Time => Duration > 0 ? FormatTime(Duration) : "—";
     public string TrackNumber => Number > 0 ? Number.ToString("00") : "·";
     public string FileName => System.IO.Path.GetFileName(Path);
@@ -34,6 +39,10 @@ internal sealed class CoreHandle : SafeHandleZeroOrMinusOneIsInvalid
 }
 internal static class NativeMethods
 {
+    [DllImport("spiewak_core", EntryPoint = "spiewak_listening_tracks", CallingConvention = CallingConvention.Cdecl)] internal static extern nint ListeningTracks(CoreHandle core, uint view, uint offset);
+    [DllImport("spiewak_core", EntryPoint = "spiewak_favorites", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Favorites(CoreHandle core, [In] long[] ids, nuint count, uint favorite);
+    [DllImport("spiewak_core", EntryPoint = "spiewak_play_listening", CallingConvention = CallingConvention.Cdecl)] internal static extern nint PlayListening(CoreHandle core, uint view, uint index);
+    [DllImport("spiewak_core", EntryPoint = "spiewak_listening_state", CallingConvention = CallingConvention.Cdecl)] internal static extern nint ListeningState(CoreHandle core);
     private const string Dll = "spiewak_core";
     [DllImport(Dll, EntryPoint = "spiewak_abi_version", CallingConvention = CallingConvention.Cdecl)] internal static extern uint Version();
     [DllImport(Dll, EntryPoint = "spiewak_open", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Open([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
@@ -80,12 +89,12 @@ public sealed class Core : IDisposable
     private struct TrackRow
     {
         public long Id, Folder; public nint Title, Artist, Album, Path, Artwork, Codec;
-        public double Duration; public uint Number, Year;
+        public double Duration; public uint Number, Year, Favorite; public long ReferenceId, EventTime;
     }
     [StructLayout(LayoutKind.Sequential)] private struct PlaylistRow { public long Id; public nint Name; public ulong Count; }
     public Core(string databasePath)
     {
-        if (NativeMethods.Version() != 5 || Marshal.SizeOf<FolderRow>() != 64 || Marshal.SizeOf<TrackRow>() != 80 || Marshal.SizeOf<Header>() != 112)
+        if (NativeMethods.Version() != 6 || Marshal.SizeOf<FolderRow>() != 64 || Marshal.SizeOf<TrackRow>() != 104 || Marshal.SizeOf<Header>() != 112)
             throw new InvalidOperationException("The native core has an incompatible ABI. Rebuild the application.");
         handle = new CoreHandle(NativeMethods.Open(databasePath));
         if (handle.IsInvalid) throw new IOException($"Cannot open the library at {databasePath}: {Text(NativeMethods.OpenError())}");
@@ -106,7 +115,7 @@ public sealed class Core : IDisposable
             for (nuint i = 0; i < header.TrackCount; i++)
             {
                 var row = Marshal.PtrToStructure<TrackRow>(header.Tracks + checked((nint)i * Marshal.SizeOf<TrackRow>()));
-                tracks.Add(new(row.Id, row.Folder, Text(row.Title), Text(row.Artist), Text(row.Album), Text(row.Path), Text(row.Artwork), Text(row.Codec), row.Duration, row.Number, row.Year));
+                tracks.Add(new(row.Id, row.Folder, Text(row.Title), Text(row.Artist), Text(row.Album), Text(row.Path), Text(row.Artwork), Text(row.Codec), row.Duration, row.Number, row.Year, row.Favorite != 0, row.ReferenceId, row.EventTime));
             }
             var playlists = new List<Playlist>();
             for (nuint i = 0; i < header.PlaylistCount; i++) { var row = Marshal.PtrToStructure<PlaylistRow>(header.Playlists + checked((nint)i * Marshal.SizeOf<PlaylistRow>())); playlists.Add(new(row.Id, Text(row.Name), row.Count)); }
@@ -134,5 +143,9 @@ public sealed class Core : IDisposable
     public Result PlaylistTracks(long id, uint offset = 0) => Checked(NativeMethods.PlaylistTracks(handle, id, offset));
     public Result PlayPlaylist(long id, uint index) => Checked(NativeMethods.PlayPlaylist(handle, id, index));
     public Result PlaylistCommand(long id, uint command, string name = "", IEnumerable<Track>? rows = null, uint index = 0) { var ids = rows?.Select(t => t.Id).ToArray() ?? []; return Checked(NativeMethods.PlaylistCommand(handle, id, command, name, ids, (nuint)ids.Length, index)); }
+    public Result ListeningTracks(uint view, uint offset = 0) => Checked(NativeMethods.ListeningTracks(handle, view, offset));
+    public Result ListeningState() => Checked(NativeMethods.ListeningState(handle));
+    public Result PlayListening(uint view, uint index = 0) => Checked(NativeMethods.PlayListening(handle, view, index));
+    public Result Favorites(IEnumerable<Track> tracks, bool favorite) { var ids = tracks.Select(t => t.ReferenceId).Distinct().ToArray(); return Checked(NativeMethods.Favorites(handle, ids, (nuint)ids.Length, favorite ? 1u : 0u)); }
     public void Dispose() => handle.Dispose();
 }

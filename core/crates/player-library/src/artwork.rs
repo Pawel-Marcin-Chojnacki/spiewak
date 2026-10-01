@@ -43,7 +43,7 @@ impl Cache {
     }
     pub fn prune(&mut self, db: &rusqlite::Connection) -> Result<()> {
         // Retain all library and saved-session references; only old generated orphans are disposable.
-        let mut stmt=db.prepare("SELECT embedded_art FROM tracks UNION SELECT artwork FROM folders UNION SELECT artwork FROM session_items").map_err(|e|e.to_string())?;
+        let mut stmt=db.prepare("SELECT embedded_art FROM tracks UNION SELECT artwork FROM folders UNION SELECT artwork FROM session_items UNION SELECT artwork FROM favorites UNION SELECT artwork FROM listening_history").map_err(|e|e.to_string())?;
         let keep = stmt
             .query_map([], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?
@@ -475,6 +475,7 @@ mod tests {
             flags: 5,
         };
         lib.save_session(&session, true).unwrap();
+        super::super::listening::drop_migration(&lib.db);
         lib.db.execute_batch("ALTER TABLE tracks DROP COLUMN embedded_art; ALTER TABLE tracks DROP COLUMN art_checked; ALTER TABLE folders DROP COLUMN artwork; ALTER TABLE folders DROP COLUMN art_source; PRAGMA user_version=7;").unwrap();
         drop(lib);
         let lib = Library::open(&db).unwrap();

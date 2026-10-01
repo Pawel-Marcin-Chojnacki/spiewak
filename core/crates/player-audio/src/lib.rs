@@ -1,7 +1,8 @@
 //! Streaming playback on a dedicated Rust worker. Rodio uses Symphonia + CPAL/WASAPI.
-use player_domain::{Queue, Session, Track};
+use player_domain::{Listen, Queue, Session, Track};
 use rodio::{Decoder, DeviceSinkBuilder, Player};
 use std::{
+    collections::VecDeque,
     fs::File,
     sync::{Arc, Mutex, mpsc},
     thread,
@@ -40,10 +41,45 @@ pub enum Command {
     Refresh(Vec<Track>),
 }
 type Request = (Command, mpsc::Sender<Result<(), String>>);
+#[derive(Default)]
+struct StartLog {
+    serial: u64,
+    dropped: u64,
+    pending: VecDeque<(u64, Listen)>,
+}
+impl StartLog {
+    fn push(&mut self, track: Track) -> Result<(), String> {
+        if self.pending.len() >= 1000 {
+            self.dropped = self.dropped.saturating_add(1);
+            return Err(
+                "Listening history buffer is full. Some starts were not saved; playback continues."
+                    .into(),
+            );
+        }
+        self.serial += 1;
+        self.pending.push_back((
+            self.serial,
+            Listen {
+                track,
+                started_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+            },
+        ));
+        Ok(())
+    }
+    fn acknowledge(&mut self, serial: u64) {
+        while self.pending.front().is_some_and(|(id, _)| *id <= serial) {
+            self.pending.pop_front();
+        }
+    }
+}
 pub struct Audio {
     sender: mpsc::Sender<Request>,
     state: Arc<Mutex<Playback>>,
     worker: Option<thread::JoinHandle<()>>,
+    starts: Arc<Mutex<StartLog>>,
 }
 impl Default for Audio {
     fn default() -> Self {
@@ -70,6 +106,8 @@ impl Audio {
             revision: 1,
             ..Default::default()
         }));
+        let starts = Arc::new(Mutex::new(StartLog::default()));
+        let worker_starts = starts.clone();
         let shared = state.clone();
         let worker = thread::spawn(move || {
             let mut device = None;
@@ -87,6 +125,7 @@ impl Audio {
                     Err(_) => break,
                 };
                 let mut error = None;
+                let mut started = None;
                 let mut acknowledgement = None;
                 if let Some((command, reply)) = request {
                     let previous_queue = queue.clone();
@@ -252,6 +291,7 @@ impl Audio {
                             player = Some(next);
                             resume_position = 0.0;
                             auto_advance = true;
+                            started = Some(track.clone());
                         }
                         Ok(())
                     })();
@@ -284,6 +324,7 @@ impl Audio {
                             next.set_volume(if muted { 0.0 } else { volume });
                             next.append(source);
                             player = Some(next);
+                            started = Some(track.clone());
                         }
                         Err(e) => {
                             auto_advance = false;
@@ -294,6 +335,17 @@ impl Audio {
                     }
                     if let Ok(mut s) = shared.lock()
                         && let Some(e) = error
+                    {
+                        s.error = e;
+                    }
+                }
+                if let Some(track) = started {
+                    let result = worker_starts
+                        .lock()
+                        .map_err(|_| "Listening history buffer unavailable.".to_owned())
+                        .and_then(|mut log| log.push(track));
+                    if let Err(e) = result
+                        && let Ok(mut s) = shared.lock()
                     {
                         s.error = e;
                     }
@@ -327,7 +379,23 @@ impl Audio {
             sender,
             state,
             worker: Some(worker),
+            starts,
         })
+    }
+    pub fn history_warning(&self) -> Result<String, String> {
+        self.starts.lock().map(|s| if s.dropped==0 {String::new()} else {format!("Listening history could not buffer {} playback starts. Those entries are missing; playback can continue.",s.dropped)}).map_err(|_|"Listening history buffer unavailable.".into())
+    }
+    pub fn pending_starts(&self) -> Result<Vec<(u64, Listen)>, String> {
+        self.starts
+            .lock()
+            .map(|s| s.pending.iter().cloned().collect())
+            .map_err(|_| "Listening history buffer unavailable.".into())
+    }
+    pub fn acknowledge_starts(&self, serial: u64) -> Result<(), String> {
+        self.starts
+            .lock()
+            .map(|mut s| s.acknowledge(serial))
+            .map_err(|_| "Listening history buffer unavailable.".into())
     }
     pub fn command(&self, command: Command) -> Result<(), String> {
         let (tx, rx) = mpsc::channel();
@@ -389,6 +457,36 @@ impl Drop for Audio {
 mod tests {
     use super::*;
     #[test]
+    fn start_log_is_bounded_and_acknowledges_only_the_committed_prefix() {
+        let mut log = StartLog::default();
+        let t = Track {
+            id: 1,
+            ..Default::default()
+        };
+        for _ in 0..1000 {
+            log.push(t.clone()).unwrap();
+        }
+        assert!(log.push(t.clone()).is_err());
+        assert_eq!(log.pending.len(), 1000);
+        assert_eq!(log.dropped, 1);
+        log.acknowledge(999);
+        log.push(t).unwrap();
+        log.acknowledge(1000);
+        assert_eq!(log.pending.len(), 1);
+        assert_eq!(log.pending[0].0, 1001);
+        let audio = Audio::new();
+        *audio.starts.lock().unwrap() = log;
+        audio.acknowledge_starts(1001).unwrap();
+        audio.command(Command::Volume(0.5)).unwrap();
+        assert!(audio.pending_starts().unwrap().is_empty());
+        assert!(
+            audio
+                .history_warning()
+                .unwrap()
+                .contains("1 playback starts")
+        );
+    }
+    #[test]
     fn restore_is_lazy_paused_and_retains_fifo_boundary() {
         let a = Track {
             id: 1,
@@ -406,6 +504,7 @@ mod tests {
             flags: 5,
         })
         .unwrap();
+        assert!(audio.pending_starts().unwrap().is_empty());
         let before = audio.snapshot().unwrap();
         assert!(!before.playing);
         assert_eq!(before.position, 3.0);
@@ -423,6 +522,7 @@ mod tests {
         audio.command(Command::Seek(4.0)).unwrap();
         assert_eq!(audio.session().unwrap().position, 4.0);
         assert!(audio.command(Command::Toggle).is_err());
+        assert!(audio.pending_starts().unwrap().is_empty());
         assert_eq!(audio.session().unwrap().position, 4.0);
         assert_eq!(audio.session().unwrap().next_end, Some(3));
         audio.command(Command::Stop).unwrap();

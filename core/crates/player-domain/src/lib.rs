@@ -17,6 +17,15 @@ pub struct Track {
     pub duration: f64,
     pub number: u32,
     pub year: u32,
+    pub favorite: bool,
+    pub reference_id: i64,
+    pub event_time: i64,
+}
+
+#[derive(Clone, Debug)]
+pub struct Listen {
+    pub track: Track,
+    pub started_at: i64,
 }
 
 #[derive(Clone, Debug)]

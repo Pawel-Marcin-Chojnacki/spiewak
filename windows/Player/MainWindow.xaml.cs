@@ -88,7 +88,7 @@ public partial class MainWindow : Window
     private async Task Browse(Folder folder, bool remember)
     {
         if (core is null) return;
-        currentPlaylist = 0; PlaylistTools.Visibility = Visibility.Collapsed; SortBox.Visibility = Visibility.Visible;
+        currentListening = -1; currentPlaylist = 0; PlaylistTools.Visibility = Visibility.Collapsed; SortBox.Visibility = Visibility.Visible;
         changingSearch = true; SearchBox.Text = ""; changingSearch = false; searchTimer.Stop();
         var version = ++navigationVersion;
         var latest = await Task.Run(() => core.Folder(folder.Id));
@@ -116,6 +116,7 @@ public partial class MainWindow : Window
     private async void ChildFolderClicked(object sender, ItemClickEventArgs args) { if (args.ClickedItem is Folder folder) await TryBrowse(folder); }
     private async void LoadMore(object sender, RoutedEventArgs args)
     {
+        if (currentListening >= 0) { await MoreListening(); return; }
         if (currentPlaylist != 0) { await MorePlaylist(); return; }
         if (core is null || currentFolder is null) return;
         var folder = currentFolder; var version = navigationVersion; MoreButton.IsEnabled = false;
@@ -161,7 +162,24 @@ public partial class MainWindow : Window
         try { await Task.Run(() => core.Selection(selected, mode)); } catch (Exception e) { Error(e); }
     }
     private async void PlayFolder(object sender, RoutedEventArgs args)
-    { if (SearchBox.Text.Trim().Length > 0) { if (core is not null && tracks.Count > 0) { try { var rows = tracks.ToArray(); await Task.Run(() => core.Selection(rows, 0)); } catch (Exception e) { Error(e); } } } else if (tracks.FirstOrDefault() is Track track) await Play(track); }
+    {
+        if (core is null || tracks.Count == 0) return;
+        try
+        {
+            if (SearchBox.Text.Trim().Length > 0)
+            {
+                var rows = tracks.ToArray();
+                await Task.Run(() => core.Selection(rows, 0));
+            }
+            else if (currentListening >= 0)
+            {
+                var view = (uint)currentListening;
+                await Task.Run(() => core.PlayListening(view));
+            }
+            else if (tracks.FirstOrDefault() is Track track) await Play(track);
+        }
+        catch (Exception e) { Error(e); }
+    }
     private async void QueueDoubleTapped(object sender, DoubleTappedRoutedEventArgs args) { if (QueueList.SelectedIndex >= 0) await Command(14, queueStartIndex + QueueList.SelectedIndex); }
     private async void ShuffleQueue(object sender, RoutedEventArgs args) => await Command(9);
     private async void CycleRepeat(object sender, RoutedEventArgs args) => await Command(8);
@@ -181,7 +199,7 @@ public partial class MainWindow : Window
     private async void ToggleShortcut(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { if (FocusManager.GetFocusedElement(Shell.XamlRoot) is TextBox) return; args.Handled = true; await Command(1); }
     private async void TrackKeyDown(object sender, KeyRoutedEventArgs args) { if (args.Key == VirtualKey.Enter && TrackList.SelectedItem is Track track) { args.Handled = true; await PlayOne(track); } }
     private void TrackSelectionChanged(object sender, SelectionChangedEventArgs args)
-    { if (TrackList.SelectedItem is Track track) { InspectorPath.Text = track.Path; InspectorAlbum.Text = $"{track.Album}\n{track.Codec} · {track.Time}"; } }
+    { UpdateSelectedFavorite(); if (TrackList.SelectedItem is Track track) { InspectorPath.Text = track.Path; InspectorAlbum.Text = $"{track.Album}\n{track.Codec} · {track.Time}" + (currentListening >= 0 && SearchBox.Text.Trim().Length == 0 ? $"\n{(currentListening == 2 ? "Started" : currentListening == 1 ? "Added" : "Favorited")}: {track.LibraryTime}" : ""); } }
     private void ShowSelected(object sender, RoutedEventArgs args)
     { if (TrackList.SelectedItem is Track track) Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{track.Path}\"") { UseShellExecute = true }); }
     private async void GoBack(object sender, RoutedEventArgs args) => await Back();
@@ -193,13 +211,14 @@ public partial class MainWindow : Window
         if (core is null || polling || closed) return; polling = true;
         try
         {
-            if (++libraryPollTick % 4 == 0 && !scanning) await PollLibrary();
+            if (++libraryPollTick % 4 == 0 && !scanning) { await PollLibrary(); await PollListening(); }
             var state = await Task.Run(() => core.Now()); if (closed) return;
             if (state.Error.Length > 0 && state.Error != shownAudioError) { ErrorBar.Message = state.Error; ErrorBar.IsOpen = true; }
             shownAudioError = state.Error;
             MuteIcon.Glyph = (state.Flags & 1) != 0 ? "\uE74F" : "\uE767";
             RepeatLabel.Text = ((state.Flags >> 1) & 3) switch { 1 => "↻∞", 2 => "↻1", _ => "↻" };
             var track = state.Tracks.FirstOrDefault();
+            playingTrack = track; PlayingFavoriteButton.IsEnabled = track?.Id > 0; PlayingFavoriteButton.Content = track?.Favorite == true ? "♥" : "♡"; ToolTipService.SetToolTip(PlayingFavoriteButton, track?.Favorite == true ? "Remove current track from favorites" : "Add current track to favorites");
             if (playingId != state.CurrentId || queueRevision != state.Revision) { playingId = state.CurrentId; PlayingTitle.Text = track?.Title ?? "Nothing playing"; PlayingArtist.Text = track?.ArtistLabel ?? "Choose something from your folders"; PlayingArt.Source = Image(track?.Artwork, 112); }
             updatingSeek = true; SeekSlider.Maximum = Math.Max(1, track?.Duration ?? 1); if (pendingSeek is null) SeekSlider.Value = Math.Clamp(state.Position, 0, SeekSlider.Maximum); SeekSlider.IsEnabled = track?.Duration > 0; updatingSeek = false;
             PositionText.Text = Track.FormatTime(state.Position); DurationText.Text = track?.Time ?? "0:00"; PlayIcon.Glyph = state.Playing ? "\uE769" : "\uE768";

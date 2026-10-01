@@ -153,6 +153,7 @@ try
         await Wait(() => (core.LibraryState().Flags & 1) != 0, "Restored root automatically watched again");
     }
     using (var core = new Core(db)) { Assert(core.Folder(folderId).Folders.Single().Kind == FolderKind.UserCollection, "Folder presentation survives restart"); core.SetFolderKind(folderId, FolderKind.Auto); Assert(core.Folder(folderId).Folders.Single().Kind == FolderKind.LooseTracks, "One remaining tagged song stays a loose track in automatic mode"); Assert(core.Playlists().Playlists.Single().Count == 2, "Playlist survives restart"); core.Rescan(); Assert(core.PlaylistTracks(playlistId).Tracks.Any(t => t.Id == 0), "Unavailable playlist entry remains visible"); Assert(core.Tracks(folderId).Tracks.Count == 1 && core.Tracks(folderId).Tracks[0].Id == trackId, "Cache persists and external delete reconciles after restart"); }
+    await ListeningChecks(sandbox, args.Contains("--audio"));
     await SessionChecks(sandbox, dll, args.Contains("--audio"));
     var artworkFfmpeg = Array.IndexOf(args, "--ffmpeg");
     await ArtworkChecks(sandbox, args.Contains("--audio"), artworkFfmpeg >= 0 ? args[artworkFfmpeg + 1] : null);
@@ -281,7 +282,7 @@ static async Task ArtworkChecks(string sandbox, bool audio, string? ffmpeg)
     var rootId = core.Folders().Folders.Single().Id; var children = core.Folders(rootId).Folders;
     var albumFolder = children.Single(f => f.Name == "Album"); var looseFolder = children.Single(f => f.Name == "Loose");
     var albumTracks = core.Tracks(albumFolder.Id).Tracks; var looseTracks = core.Tracks(looseFolder.Id).Tracks;
-    Assert(albumFolder.Kind == FolderKind.Album && File.Exists(albumFolder.Artwork) && albumTracks.All(t => t.Artwork == albumFolder.Artwork), "Folder artwork crosses ABI 5 and is shared only by an album folder");
+    Assert(albumFolder.Kind == FolderKind.Album && File.Exists(albumFolder.Artwork) && albumTracks.All(t => t.Artwork == albumFolder.Artwork), "Folder artwork crosses ABI 6 and is shared only by an album folder");
     Assert(looseFolder.Kind == FolderKind.LooseTracks && looseFolder.Artwork.Length == 0 && looseTracks[0].Artwork != looseTracks[1].Artwork, "Unrelated songs keep separate embedded artwork instead of their folder cover");
     Assert(PngSize(looseTracks[0].Artwork) == (512, 256) && PngSize(looseTracks[1].Artwork) == (100, 200), "Cache thumbnails are bounded and preserve aspect ratio");
     Assert(looseTracks.All(t => t.Artwork.StartsWith(Path.ChangeExtension(db, "artwork"), StringComparison.OrdinalIgnoreCase)), "Artwork is written only under the app database cache directory");
@@ -351,3 +352,57 @@ static void EmbedArtwork(string path, byte[] png, uint number, string album)
 }
 static void Id3Frame(Stream stream, string name, byte[] data) { stream.Write(Encoding.ASCII.GetBytes(name)); stream.Write(SyncSafe(data.Length)); stream.Write(new byte[2]); stream.Write(data); }
 static byte[] SyncSafe(int size) => new[] { (byte)((size >> 21) & 127), (byte)((size >> 14) & 127), (byte)((size >> 7) & 127), (byte)(size & 127) };
+
+static async Task ListeningChecks(string sandbox, bool audio)
+{
+    var root=Path.Combine(sandbox,"Listening Śpiewak"); Directory.CreateDirectory(root);
+    var a=Path.Combine(root,"One.wav"); var b=Path.Combine(root,"Two.wav"); Wave(a,260); Wave(b,290);
+    var hashes=new[]{SHA256.HashData(File.ReadAllBytes(a)),SHA256.HashData(File.ReadAllBytes(b))};
+    var db=Path.Combine(sandbox,"listening.db"); Track first,second; string renamed=Path.Combine(root,"Renamed Żółty.wav");
+    using(var core=new Core(db))
+    {
+        core.AddRoot(root); var rows=core.ListeningTracks(1).Tracks; first=rows.Single(t=>t.Path==a); second=rows.Single(t=>t.Path==b);
+        Assert(rows.Count==2 && rows.All(t=>t.EventTime>0),"Recently added exposes first-indexed time through ABI 6");
+        core.Favorites(new[]{first,first},true); core.Favorites(new[]{first},true);
+        Assert(core.ListeningTracks(0).Tracks.Count==1 && core.Tracks(first.Folder).Tracks.Single(t=>t.Id==first.Id).Favorite,"Favorite is idempotent and visible in ordinary folder rows");
+        Assert(core.Search("One").Tracks.Single().Favorite,"Search rows share favorite state");
+        var playlist=core.PlaylistCommand(0,0,"Favorite reference",new[]{first}).CurrentId;
+        Assert(core.PlaylistTracks(playlist).Tracks.Single().Favorite,"Playlist rows share favorite state");
+        core.Selection(new[]{first,second},1); Assert(core.ListeningTracks(2).Tracks.Count==0,"Appending a queue creates no listening history");
+        if(audio)
+        {
+            core.Selection(new[]{first,first,second},0); Assert(core.ListeningTracks(2).Tracks.Count==1,"Successful playback start creates exactly one history occurrence");
+            Assert(core.Now().Tracks.Single().Favorite,"Transport favorite reflects application state");
+            core.Command(1); core.Command(1); core.Command(6,0.12); core.Command(5,1);
+            Assert(core.ListeningTracks(2).Tracks.Count==1,"Pause/resume, volume and seek do not create history duplicates");
+            var bad=Path.Combine(root,"broken.mp3"); File.WriteAllText(bad,"invalid audio"); core.Rescan(); var invalid=core.Search("broken").Tracks.Single();
+            try {core.Selection(new[]{invalid},0); throw new Exception("Invalid source accepted");} catch(InvalidOperationException){}
+            Assert(core.ListeningTracks(2).Tracks.Count==1 && core.Now().CurrentId==first.Id,"Failed playback does not create history or cut previous audio");
+            File.Delete(bad); core.Rescan();
+            core.Command(3); Assert(core.ListeningTracks(2).Tracks.Count==2,"Playing a duplicate queue occurrence creates a distinct history entry");
+            core.Command(5,7.9); await Task.Delay(500);
+            var history=core.ListeningTracks(2); Assert(history.Tracks.Count==3 && history.Tracks[0].Id==second.Id && history.Revision>0,"Natural advance records the start even between UI polls");
+            core.Command(8); core.Command(8); core.Command(5,7.9); await Task.Delay(500);
+            Assert(core.ListeningTracks(2).Tracks.Count==4 && core.ListeningTracks(2).Tracks[0].Id==second.Id,"Repeat-one records each fresh playback start");
+            core.Command(8); core.Command(2);
+            core.PlayListening(0); Assert(core.Queue().Tracks.Count==1 && core.Now().CurrentId==first.Id,"Explicit favorites playback uses the full listening view");
+            var count=core.ListeningTracks(2).Tracks.Count; Assert(count==5,"Playing favorites contributes to history once"); core.Command(2);
+        }
+        File.Move(a,renamed); core.Rescan();
+        Assert(core.ListeningTracks(0).Tracks.Single().Path==renamed,"Favorite follows same-volume NTFS rename");
+        var originalTime=first.EventTime; var newer=Path.Combine(root,"Later.wav"); Wave(newer,320); core.Rescan();
+        var recent=core.ListeningTracks(1).Tracks; Assert(recent[0].Path==newer && recent.Single(t=>t.Id==first.Id).EventTime==originalTime,"Rescan and rename preserve added time; new tracks sort first");
+        Assert(core.ListeningTracks(1,1).Tracks.Count==2,"Listening views support native paging");
+    }
+    using(var core=new Core(db))
+    {
+        Assert(core.ListeningTracks(0).Tracks.Single().Id==first.Id,"Favorites survive restart");
+        var historyCount=core.ListeningTracks(2).Tracks.Count; Assert(historyCount==(audio?5:0) && !core.Now().Playing,"Restart retains history without recording paused restoration");
+        Assert(SHA256.HashData(File.ReadAllBytes(renamed)).SequenceEqual(hashes[0]) && SHA256.HashData(File.ReadAllBytes(b)).SequenceEqual(hashes[1]),"Listening state never writes music tags or bytes");
+        File.Delete(renamed); core.Rescan(); var ghost=core.ListeningTracks(0).Tracks.Single();
+        Assert(ghost.Id==0 && ghost.ReferenceId==first.Id && ghost.Favorite && ghost.Path==renamed,"Deleted favorite remains visible with its original stable reference");
+        if(audio) Assert(core.ListeningTracks(2).Tracks.Any(t=>t.Id==0 && t.ReferenceId==first.Id && t.Title.StartsWith("Unavailable · ")),"History retains unavailable occurrences and last-known paths");
+        core.Favorites(new[]{ghost},false); Assert(core.ListeningTracks(0).Tracks.Count==0,"User can remove an unavailable favorite");
+        Wave(renamed,350); core.Rescan(); Assert(!core.Search("Renamed").Tracks.Single().Favorite,"Replacement file does not inherit a deleted track's favorite");
+    }
+}

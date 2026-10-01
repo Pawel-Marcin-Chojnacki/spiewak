@@ -10,11 +10,12 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 - Lofty title/artist/album/album-artist/number/year/duration; filename fallback; embedded JPEG/PNG plus folder covers, bounded content-addressed thumbnails and per-track isolation for loose folders.
 - Streaming Rust audio on a dedicated worker; folder queue, play/pause/resume/stop/seek/next/previous/volume.
 - Persistent transport, upcoming queue sidebar, path/album inspector, compact rows, hideable queue, Back, Enter/Space/Alt+Left, basic context menu.
+- Favorites, first-indexed/recently-added view and successful-playback-start history; persistent app state and unavailable snapshots.
 - Cached startup before background reconciliation; rescan external additions/renames/deletions without changing music.
 
 ## Verification
 
-- Rust: twenty-seven unit/integration tests; fmt and clippy with warnings denied.
+- Rust: thirty unit/integration tests; fmt and clippy with warnings denied.
 - Release WinUI build on ARM64; native shell visually inspected in actual VM screenshots.
 - C# ↔ Rust smoke: Unicode paths, actual WAV metadata/tags, folder fidelity, IDs across rescan/restart, external rename/delete, SHA-256 music preservation.
 - Codec integration: generated MP3, FLAC, AAC/M4A, ALAC, Ogg Vorbis and WAV fixtures all index, decode/play and seek successfully on Windows ARM64. Corrupt audio returns an error while previous audio/queue continue. FFmpeg 9.0.2 installed via winget for fixture generation only.
@@ -111,3 +112,13 @@ Schema 8 stores separate embedded-cover references and effective track covers. A
 The per-database cache accepts bounded JPEG/PNG sources, creates PNG thumbnails up to 512 pixels without enlarging smaller images, deduplicates identical source bytes and limits new storage to 256 MiB. Old generated orphans can be removed after 24 hours while library/session references and unknown files are protected. Cache write/quota/image errors do not mark the filesystem scan incomplete or prevent deleted music from being reconciled. Missing cache files regenerate. See ARTWORK.md for exact limits, retry and unsupported/corrupt-image behavior.
 
 Twenty-seven Rust tests, fmt/clippy, WinUI ARM64 Release and C# native integration pass. Tests include ID3 artwork in WAV and MP3, folder versus single-track isolation through ABI 5, aspect ratio/no enlargement, cover refresh without cutting WASAPI playback, source SHA-256 preservation, storage failure recovery and migration 7→8 retaining session state. Online artwork/tag matching remains unimplemented. Actual bitmap/UI input and large-library performance remain open; the visible shell alone does not pass them.
+
+## Listening library milestone
+
+Schema 9 adds first-indexed times, favorites and history of successful new-source starts. Existing tracks receive a migration-time baseline; rescans/rename do not reset added time. Favorite and history references follow supported stable IDs and retain unavailable snapshots after deletion. Replacement files do not inherit those favorites. Favorite changes and history writes stay in the app database.
+
+ABI 6 extends Track DTO to 104 bytes with favorite state, original reference ID and view timestamp; Folder remains 64 and Snapshot 112 bytes. WinUI has sidebar shortcuts, transport/selection hearts, Ctrl+D and 500-row pages. Explicit Play uses the full indicated view; double-click/Enter remains a single-track action. History refresh uses a coherent rows/revision snapshot.
+
+The audio worker buffers successful starts independently of UI polling; native commands/polls commit and acknowledge them atomically. Pause/resume, seek, append and failed playback are excluded. Uncommitted starts can be lost on abrupt exit; the bounded buffer reports overflow, and database failures retain pending entries for retry while audio continues. See LISTENING.md for semantics and limits.
+
+Thirty Rust tests, fmt/clippy, WinUI ARM64 Release and C# Windows native/audio checks pass, including natural advance, repeat/duplicate occurrences, unavailable favorite removal, rename/restart and music-byte preservation. The actual demo window shows the three sidebar shortcuts and empty-transport heart; sidebar/heart/keyboard interactions remain unverified through Parallels; larger-scale performance, history privacy controls and navigation/scroll polish remain open.

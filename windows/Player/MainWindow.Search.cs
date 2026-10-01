@@ -19,11 +19,11 @@ public partial class MainWindow
     {
         if (core is null || closed) return;
         var query = SearchBox.Text.Trim(); var version = navigationVersion;
-        if (query.Length == 0) { if (currentFolder is not null) await Browse(currentFolder, false); return; }
+        if (query.Length == 0) { if (currentListening >= 0) await ShowListening((uint)currentListening); else if (currentPlaylist != 0) await ShowPlaylist(currentPlaylist); else if (currentFolder is not null) await Browse(currentFolder, false); return; }
         try
         {
             var result = await Task.Run(() => core.Search(query)); if (closed || version != navigationVersion) return;
-            currentPlaylist = 0; PlaylistTools.Visibility = Visibility.Collapsed; SortBox.Visibility = Visibility.Visible;
+            PlaylistTools.Visibility = Visibility.Collapsed; SortBox.Visibility = Visibility.Visible;
             tracks.Clear(); foreach (var track in result.Tracks) tracks.Add(track);
             ChildFolders.ItemsSource = result.Folders; ChildFolders.Visibility = result.Folders.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             FolderViewButton.Visibility = Visibility.Collapsed; SetFolderArtwork(false);

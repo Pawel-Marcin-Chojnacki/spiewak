@@ -18,7 +18,7 @@ impl Library {
         if !self.playlists()?.iter().any(|p| p.id == id) {
             return Err("This playlist is no longer available.".into());
         }
-        let mut stmt=self.db.prepare("SELECT coalesce(t.id,0),coalesce(t.folder_id,0),coalesce(t.path,i.path),coalesce(t.title,'Unavailable · '||i.title),coalesce(t.artist,i.artist),coalesce(t.album,i.album),coalesce(t.album_artist,''),coalesce(t.artwork,''),coalesce(t.codec,''),coalesce(t.duration,0),coalesce(t.number,0),coalesce(t.year,0) FROM playlist_items i LEFT JOIN tracks t ON t.id=i.track_id WHERE i.playlist_id=? ORDER BY i.position,i.id LIMIT ? OFFSET ?").map_err(|e|e.to_string())?;
+        let mut stmt=self.db.prepare("SELECT coalesce(t.id,0),coalesce(t.folder_id,0),coalesce(t.path,i.path),coalesce(t.title,'Unavailable · '||i.title),coalesce(t.artist,i.artist),coalesce(t.album,i.album),coalesce(t.album_artist,''),coalesce(t.artwork,''),coalesce(t.codec,''),coalesce(t.duration,0),coalesce(t.number,0),coalesce(t.year,0),EXISTS(SELECT 1 FROM favorites f WHERE f.original_id=t.id),coalesce(t.id,0),coalesce(t.added_at,0) FROM playlist_items i LEFT JOIN tracks t ON t.id=i.track_id WHERE i.playlist_id=? ORDER BY i.position,i.id LIMIT ? OFFSET ?").map_err(|e|e.to_string())?;
         stmt.query_map(params![id, limit, offset], track_row)
             .map_err(|e| e.to_string())?
             .collect::<std::result::Result<_, _>>()

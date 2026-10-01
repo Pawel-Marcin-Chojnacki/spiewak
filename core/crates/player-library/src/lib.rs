@@ -6,6 +6,7 @@ use lofty::{
 use player_domain::{Folder, FolderKind, Track};
 mod artwork;
 mod identity;
+mod listening;
 mod monitor;
 mod playlists;
 mod presentation;
@@ -113,7 +114,7 @@ impl Library {
         let schema_version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if schema_version > 8 {
+        if schema_version > 9 {
             return Err("This library cache belongs to a newer version of Spiewak. Update the app before opening it.".into());
         }
         db.busy_timeout(std::time::Duration::from_secs(10))
@@ -195,6 +196,9 @@ impl Library {
               PRAGMA user_version=8; RELEASE migration;",
             )
             .map_err(|e| e.to_string())?;
+        }
+        if schema_version < 9 {
+            listening::migrate(&db)?;
         }
         Ok(Self {
             db,
@@ -409,7 +413,7 @@ impl Library {
                     let t = read_track(&path, folder_id, &mut cache);
                     report.changed |= old.as_ref().is_none_or(|(_, _, _, art)| art != &t.artwork);
                     let id = self.row_id("tracks", &stored_path)?;
-                    self.db.execute("INSERT INTO tracks(id,folder_id,path,title,artist,album,album_artist,artwork,codec,duration,number,year,size,modified,epoch,file_identity) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET folder_id=excluded.folder_id,title=excluded.title,artist=excluded.artist,album=excluded.album,album_artist=excluded.album_artist,artwork=excluded.artwork,codec=excluded.codec,duration=excluded.duration,number=excluded.number,year=excluded.year,size=excluded.size,modified=excluded.modified,epoch=excluded.epoch,file_identity=excluded.file_identity",params![id,t.folder_id,t.path,t.title,t.artist,t.album,t.album_artist,t.artwork,t.codec,t.duration,t.number,t.year,meta.len() as i64,modified,epoch,identity]).map_err(|e|e.to_string())?;
+                    self.db.execute("INSERT INTO tracks(id,folder_id,path,title,artist,album,album_artist,artwork,codec,duration,number,year,size,modified,epoch,file_identity,added_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,unixepoch()) ON CONFLICT(path) DO UPDATE SET folder_id=excluded.folder_id,title=excluded.title,artist=excluded.artist,album=excluded.album,album_artist=excluded.album_artist,artwork=excluded.artwork,codec=excluded.codec,duration=excluded.duration,number=excluded.number,year=excluded.year,size=excluded.size,modified=excluded.modified,epoch=excluded.epoch,file_identity=excluded.file_identity",params![id,t.folder_id,t.path,t.title,t.artist,t.album,t.album_artist,t.artwork,t.codec,t.duration,t.number,t.year,meta.len() as i64,modified,epoch,identity]).map_err(|e|e.to_string())?;
                     self.db
                         .execute(
                             "UPDATE tracks SET embedded_art=?,art_checked=? WHERE id=?",
@@ -570,7 +574,7 @@ impl Library {
         if ids.is_empty() || ids.len() > 100_000 {
             return Err("Select tracks first (up to 100,000).".into());
         }
-        let mut stmt = self.db.prepare("SELECT id,folder_id,path,title,artist,album,album_artist,artwork,codec,duration,number,year FROM tracks WHERE id=?").map_err(|e|e.to_string())?;
+        let mut stmt = self.db.prepare("SELECT id,folder_id,path,title,artist,album,album_artist,artwork,codec,duration,number,year,EXISTS(SELECT 1 FROM favorites f WHERE f.original_id=tracks.id),id,added_at FROM tracks WHERE id=?").map_err(|e|e.to_string())?;
         ids.iter()
             .map(|id| {
                 stmt.query_row([id], track_row).map_err(|_| {
@@ -612,7 +616,7 @@ impl Library {
             _ => return Err("Unknown track sort order.".into()),
         };
         let sql = format!(
-            "SELECT id,folder_id,path,title,artist,album,album_artist,artwork,codec,duration,number,year FROM tracks WHERE folder_id=? ORDER BY {order} LIMIT ? OFFSET ?"
+            "SELECT id,folder_id,path,title,artist,album,album_artist,artwork,codec,duration,number,year,EXISTS(SELECT 1 FROM favorites f WHERE f.original_id=tracks.id),id,added_at FROM tracks WHERE folder_id=? ORDER BY {order} LIMIT ? OFFSET ?"
         );
         let mut stmt = self.db.prepare(&sql).map_err(|e| e.to_string())?;
         stmt.query_map(params![folder, limit, offset], track_row)
@@ -635,7 +639,7 @@ impl Library {
             return Ok((vec![], vec![]));
         }
         let tx = self.db.unchecked_transaction().map_err(|e| e.to_string())?;
-        let mut stmt=self.db.prepare("SELECT t.id,t.folder_id,t.path,t.title,t.artist,t.album,t.album_artist,t.artwork,t.codec,t.duration,t.number,t.year FROM track_search JOIN tracks t ON t.id=track_search.rowid WHERE track_search MATCH ? ORDER BY rank LIMIT 200").map_err(|e|e.to_string())?;
+        let mut stmt=self.db.prepare("SELECT t.id,t.folder_id,t.path,t.title,t.artist,t.album,t.album_artist,t.artwork,t.codec,t.duration,t.number,t.year,EXISTS(SELECT 1 FROM favorites f WHERE f.original_id=t.id),t.id,t.added_at FROM track_search JOIN tracks t ON t.id=track_search.rowid WHERE track_search MATCH ? ORDER BY rank LIMIT 200").map_err(|e|e.to_string())?;
         let tracks = stmt
             .query_map([&query], track_row)
             .map_err(|e| e.to_string())?
@@ -688,6 +692,9 @@ fn track_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
         duration: r.get(9)?,
         number: r.get(10)?,
         year: r.get(11)?,
+        favorite: r.get(12)?,
+        reference_id: r.get(13)?,
+        event_time: r.get(14)?,
     })
 }
 

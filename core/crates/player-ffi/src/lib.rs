@@ -31,6 +31,11 @@ impl Core {
             .checkpoint
             .lock()
             .map_err(|_| "Session lock unavailable.")?;
+        let events = self.audio.pending_starts()?;
+        if let Some((last, _)) = events.last() {
+            self.library.lock().map_err(|_|"Library unavailable.")?.record_listens(&events.iter().map(|(_,e)|e.clone()).collect::<Vec<_>>()).map_err(|e|format!("Cannot save listening history: {e}. Playback continues; the pending events will retry."))?;
+            self.audio.acknowledge_starts(*last)?;
+        }
         let session = self.audio.session()?;
         let changed = !Arc::ptr_eq(&saved.tracks, &session.tracks);
         if !force && !changed && saved.written.elapsed() < Duration::from_secs(5) {
@@ -81,6 +86,9 @@ pub struct TrackDto {
     duration: f64,
     number: u32,
     year: u32,
+    favorite: u32,
+    reference_id: i64,
+    event_time: i64,
 }
 #[repr(C)]
 pub struct PlaylistDto {
@@ -196,6 +204,13 @@ impl Snapshot {
                 duration: t.duration,
                 number: t.number,
                 year: t.year,
+                favorite: u32::from(t.favorite),
+                reference_id: if t.reference_id > 0 {
+                    t.reference_id
+                } else {
+                    t.id
+                },
+                event_time: t.event_time,
             });
         }
         self.track_count = self.track_rows.len();
@@ -232,7 +247,7 @@ unsafe fn text<'a>(ptr: *const c_char) -> Result<&'a str, String> {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn spiewak_abi_version() -> u32 {
-    5
+    6
 }
 /// # Safety
 /// `path` must point to a valid NUL-terminated UTF-8 database path during this call.
@@ -513,7 +528,14 @@ pub unsafe extern "C" fn spiewak_now(ptr: *mut Core) -> *mut Snapshot {
     guard(|| {
         let c = unsafe { core(ptr) }?;
         let checkpoint_error = c.checkpoint(false).err();
-        let playback = c.audio.snapshot()?;
+        let mut playback = c.audio.snapshot()?;
+        if let Some(track) = &mut playback.track {
+            track.favorite = c
+                .library
+                .lock()
+                .map_err(|_| "Library unavailable.")?
+                .favorite(track.id)?;
+        }
         let mut s = Snapshot {
             position: playback.position,
             current_id: playback.track.as_ref().map(|t| t.id).unwrap_or(0),
@@ -524,7 +546,16 @@ pub unsafe extern "C" fn spiewak_now(ptr: *mut Core) -> *mut Snapshot {
             flags: playback.flags,
             ..Default::default()
         };
-        s.error = s.string(checkpoint_error.as_deref().unwrap_or(&playback.error));
+        let warning = c.audio.history_warning()?;
+        let error = checkpoint_error.as_deref().unwrap_or(&playback.error);
+        let diagnostic = if warning.is_empty() {
+            error.to_owned()
+        } else if error.is_empty() {
+            warning
+        } else {
+            format!("{error} {warning}")
+        };
+        s.error = s.string(&diagnostic);
         Ok(s.tracks(playback.track.into_iter().collect()))
     })
 }
@@ -679,14 +710,105 @@ pub unsafe extern "C" fn spiewak_folder_kind(ptr: *mut Core, id: i64, kind: u32)
         Ok(Snapshot::default().folders(vec![folder]))
     })
 }
+/// # Safety
+/// Live core; view 0 favorites, 1 recently added, 2 history. Page size 500.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_listening_tracks(
+    ptr: *mut Core,
+    view: u32,
+    offset: u32,
+) -> *mut Snapshot {
+    guard(|| {
+        let c = unsafe { core(ptr) }?;
+        c.checkpoint(false)?;
+        let (rows, revision) = c
+            .library
+            .lock()
+            .map_err(|_| "Library unavailable.")?
+            .listening_view(view, offset, 500)?;
+        Ok(Snapshot {
+            revision,
+            ..Default::default()
+        }
+        .tracks(rows))
+    })
+}
+
+/// # Safety
+/// Live core; IDs are original stable track IDs, array valid for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_favorites(
+    ptr: *mut Core,
+    ids: *const i64,
+    count: usize,
+    favorite: u32,
+) -> *mut Snapshot {
+    guard(|| {
+        if ids.is_null() || count == 0 || count > 100_000 || favorite > 1 {
+            return Err("Invalid favorite selection.".into());
+        }
+        let c = unsafe { core(ptr) }?;
+        c.library
+            .lock()
+            .map_err(|_| "Library unavailable.")?
+            .set_favorites(
+                unsafe { std::slice::from_raw_parts(ids, count) },
+                favorite == 1,
+            )?;
+        Ok(Snapshot::default())
+    })
+}
+/// # Safety
+/// Live core; index is the occurrence in the newest-first listening view.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_play_listening(
+    ptr: *mut Core,
+    view: u32,
+    index: u32,
+) -> *mut Snapshot {
+    guard(|| {
+        let c = unsafe { core(ptr) }?;
+        let rows = c
+            .library
+            .lock()
+            .map_err(|_| "Library unavailable.")?
+            .listening_tracks(view, 0, 100_001)?;
+        if rows.len() > 100_000 {
+            return Err(
+                "This view is too large to queue at once. Select a smaller group of tracks.".into(),
+            );
+        }
+        c.command(Command::Replace(rows, index as usize))?;
+        Ok(Snapshot::default())
+    })
+}
+
+/// # Safety
+/// Live core; history revision changes after a successfully committed batch.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_listening_state(ptr: *mut Core) -> *mut Snapshot {
+    guard(|| {
+        let c = unsafe { core(ptr) }?;
+        let revision = c
+            .library
+            .lock()
+            .map_err(|_| "Library unavailable.")?
+            .listening_revision()?;
+        Ok(Snapshot {
+            revision,
+            ..Default::default()
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn snapshot_layout_and_utf8_ownership() {
-        assert_eq!(spiewak_abi_version(), 5);
+        assert_eq!(spiewak_abi_version(), 6);
         assert_eq!(std::mem::size_of::<FolderDto>(), 64);
-        assert_eq!(std::mem::size_of::<TrackDto>(), 80);
+        assert_eq!(std::mem::size_of::<TrackDto>(), 104);
         let s = Snapshot::default().tracks(vec![Track {
             title: "Śpiewak 🎵".into(),
             ..Default::default()
