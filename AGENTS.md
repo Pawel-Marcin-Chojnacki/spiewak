@@ -12,3 +12,5 @@ Native Windows folder-first music player. The supplied plan is in docs/master-pl
 - Keep docs/STATUS.md honest about implemented and unverified requirements.
 
 - Read docs/household-requirements.md before changing folder/home presentation or metadata automation. Real folders remain canonical; single tagged songs must not become prominent artificial albums.
+
+- Windows commit identity: use process-local GIT_AUTHOR_NAME and GIT_COMMITTER_NAME = Pawel, keeping the existing owner email. Do not copy names from git log through PowerShell's OEM decoding: older published author names contain accumulated mojibake. Do not change git config or rewrite published commits to repair that historical metadata.
