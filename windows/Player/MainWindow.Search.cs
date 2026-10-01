@@ -23,6 +23,7 @@ public partial class MainWindow
         try
         {
             var result = await Task.Run(() => core.Search(query)); if (closed || version != navigationVersion) return;
+            currentPlaylist = 0; PlaylistTools.Visibility = Visibility.Collapsed; SortBox.Visibility = Visibility.Visible;
             tracks.Clear(); foreach (var track in result.Tracks) tracks.Add(track);
             ChildFolders.ItemsSource = result.Folders; ChildFolders.Visibility = result.Folders.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             FolderHeading.Text = "Search results"; FolderSummary.Text = $"{tracks.Count} tracks · {result.Folders.Count} folders · matching ‘{query}’";

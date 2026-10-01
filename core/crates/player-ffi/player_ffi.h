@@ -7,12 +7,14 @@ extern "C" {
 typedef struct SpiewakCore SpiewakCore;
 typedef struct { int64_t id, parent; const char *name, *path; uint32_t has_children; } SpiewakFolder;
 typedef struct { int64_t id, folder; const char *title, *artist, *album, *path, *artwork, *codec; double duration; uint32_t number, year; } SpiewakTrack;
+typedef struct { int64_t id; const char *name; uint64_t count; } SpiewakPlaylist;
 /* Read-only header of a larger owned allocation. Never allocate this yourself. */
 typedef struct SpiewakSnapshot {
  const SpiewakFolder *folders; size_t folder_count;
  const SpiewakTrack *tracks; size_t track_count;
  double position; int64_t current_id, current_index; uint64_t revision;
  uint32_t playing; float volume; uint32_t flags; const char *error, *message;
+ const SpiewakPlaylist *playlists; size_t playlist_count;
 } SpiewakSnapshot;
 uint32_t spiewak_abi_version(void);
 SpiewakCore *spiewak_open(const char *database_path);
@@ -34,6 +36,10 @@ SpiewakSnapshot* spiewak_selection(SpiewakCore*, const int64_t* ids, size_t coun
 SpiewakSnapshot *spiewak_search(SpiewakCore *, const char *query);
 SpiewakSnapshot *spiewak_tracks_sorted(SpiewakCore *, int64_t folder, uint32_t offset, uint32_t limit, uint32_t sort);
 SpiewakSnapshot *spiewak_play_view(SpiewakCore *, int64_t folder, int64_t track, uint32_t sort);
+SpiewakSnapshot *spiewak_playlists(SpiewakCore *);
+SpiewakSnapshot *spiewak_playlist_tracks(SpiewakCore *, int64_t id, uint32_t offset);
+SpiewakSnapshot *spiewak_playlist_command(SpiewakCore *, int64_t id, uint32_t command, const char *name, const int64_t *ids, size_t count, uint32_t index);
+SpiewakSnapshot *spiewak_play_playlist(SpiewakCore *, int64_t id, uint32_t index);
 #ifdef __cplusplus
 }
 #endif

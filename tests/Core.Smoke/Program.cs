@@ -15,7 +15,7 @@ var before = SHA256.HashData(File.ReadAllBytes(one));
 var db = Path.Combine(sandbox, "cache", "library.db");
 try
 {
-    long folderId, trackId;
+    long folderId, trackId, playlistId;
     using (var core = new Core(db))
     {
         core.AddRoot(music);
@@ -29,6 +29,14 @@ try
         Assert(core.Search("morn").Tracks.Single().Id == tracks[0].Id, "Prefix search through typed ABI");
         Assert(core.Search("ŚPIE").Tracks.Count == 2, "Unicode path search");
         Assert(core.Tracks(folderId, 0, 1).Tracks[0].Title == "Evening", "Native title sort");
+        playlistId = core.PlaylistCommand(0, 0, "Evening Śpiewak").CurrentId;
+        core.PlaylistCommand(playlistId, 3, rows: new[] { tracks[0], tracks[1], tracks[0] });
+        Assert(core.PlaylistTracks(playlistId).Tracks.Count == 3, "Persistent playlist preserves duplicates");
+        core.PlaylistCommand(playlistId, 4, index: 2); core.PlaylistCommand(playlistId, 6, index: 0);
+        Assert(core.PlaylistTracks(playlistId).Tracks[0].Id == tracks[1].Id, "Playlist reorder/remove by occurrence");
+        core.PlaylistCommand(playlistId, 1, "Renamed playlist"); Assert(core.Playlists().Playlists.Single().Name == "Renamed playlist", "Rename playlist");
+        core.PlaylistCommand(playlistId, 2); Assert(core.Playlists().Playlists.Count == 0, "Playlist trash");
+        core.PlaylistCommand(playlistId, 7); Assert(core.Playlists().Playlists.Count == 1, "Restore playlist without modifying music");
         trackId = tracks[0].Id;
         core.Selection(tracks, 1); await Wait(() => core.Queue().Tracks.Count == 2, "Append selection without auto-playing");
         Assert(!core.Now().Playing, "Queue additions do not start audio");
@@ -37,6 +45,7 @@ try
         core.Command(13); await Wait(() => core.Queue().Tracks.Count == 0, "Clear upcoming");
         if (args.Contains("--audio"))
         {
+            core.PlayPlaylist(playlistId, 1); await Wait(() => core.Now().CurrentId == trackId && core.Now().CurrentIndex == 1, "Playlist playback starts correct occurrence");
             core.Play(folderId, trackId); await Wait(() => core.Now().Playing && core.Now().Position > 0.15, "Audio starts through WASAPI");
             Assert(core.Queue().Tracks.Count == 2, "Queue contains the whole folder");
             core.Selection(new[] { tracks[1], tracks[0] }, 2); await Wait(() => core.Queue().Tracks.Count == 4, "Insert selection next preserving duplicates");
@@ -90,7 +99,7 @@ try
         Assert(core.Search("renam").Tracks.Count == 1, "Renamed filename updates FTS");
         File.Delete(moved);
     }
-    using (var core = new Core(db)) { core.Rescan(); Assert(core.Tracks(folderId).Tracks.Count == 1 && core.Tracks(folderId).Tracks[0].Id == trackId, "Cache persists and external delete reconciles after restart"); }
+    using (var core = new Core(db)) { Assert(core.Playlists().Playlists.Single().Count == 2, "Playlist survives restart"); core.Rescan(); Assert(core.PlaylistTracks(playlistId).Tracks.Any(t => t.Id == 0), "Unavailable playlist entry remains visible"); Assert(core.Tracks(folderId).Tracks.Count == 1 && core.Tracks(folderId).Tracks[0].Id == trackId, "Cache persists and external delete reconciles after restart"); }
     Console.WriteLine("PASS: native Rust ↔ C# vertical slice" + (args.Contains("--audio") ? " including Windows audio" : " (audio skipped)"));
 }
 finally { Directory.Delete(sandbox, true); }

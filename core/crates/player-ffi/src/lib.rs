@@ -1,6 +1,6 @@
 //! Typed C ABI. All returned memory belongs to a snapshot, released exactly once.
 use player_audio::{Audio, Command};
-use player_domain::{Folder, Track};
+use player_domain::{Folder, Playlist, Track};
 use player_library::Library;
 use std::{
     ffi::{CStr, CString, c_char},
@@ -40,6 +40,12 @@ pub struct TrackDto {
     year: u32,
 }
 #[repr(C)]
+pub struct PlaylistDto {
+    id: i64,
+    name: *const c_char,
+    count: u64,
+}
+#[repr(C)]
 pub struct Snapshot {
     folders: *const FolderDto,
     folder_count: usize,
@@ -54,7 +60,10 @@ pub struct Snapshot {
     flags: u32,
     error: *const c_char,
     message: *const c_char,
+    playlists: *const PlaylistDto,
+    playlist_count: usize,
     strings: Vec<CString>,
+    playlist_rows: Vec<PlaylistDto>,
     folder_rows: Vec<FolderDto>,
     track_rows: Vec<TrackDto>,
 }
@@ -74,6 +83,9 @@ impl Default for Snapshot {
             flags: 0,
             error: std::ptr::null(),
             message: std::ptr::null(),
+            playlists: std::ptr::null(),
+            playlist_count: 0,
+            playlist_rows: Vec::new(),
             strings: Vec::new(),
             folder_rows: Vec::new(),
             track_rows: Vec::new(),
@@ -101,6 +113,19 @@ impl Snapshot {
         }
         self.folder_count = self.folder_rows.len();
         self.folders = self.folder_rows.as_ptr();
+        self
+    }
+    fn playlists(mut self, rows: Vec<Playlist>) -> Self {
+        for p in rows {
+            let name = self.string(&p.name);
+            self.playlist_rows.push(PlaylistDto {
+                id: p.id,
+                name,
+                count: p.count,
+            });
+        }
+        self.playlist_count = self.playlist_rows.len();
+        self.playlists = self.playlist_rows.as_ptr();
         self
     }
     fn tracks(mut self, rows: Vec<Track>) -> Self {
@@ -159,7 +184,7 @@ unsafe fn text<'a>(ptr: *const c_char) -> Result<&'a str, String> {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn spiewak_abi_version() -> u32 {
-    2
+    3
 }
 /// # Safety
 /// `path` must point to a valid NUL-terminated UTF-8 database path during this call.
@@ -446,12 +471,93 @@ pub unsafe extern "C" fn spiewak_now(ptr: *mut Core) -> *mut Snapshot {
 pub unsafe extern "C" fn spiewak_queue(ptr: *mut Core) -> *mut Snapshot {
     guard(|| Ok(Snapshot::default().tracks(unsafe { core(ptr) }?.audio.queue()?)))
 }
+/// # Safety
+/// Live core for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_playlists(ptr: *mut Core) -> *mut Snapshot {
+    guard(|| {
+        Ok(Snapshot::default().playlists(
+            unsafe { core(ptr) }?
+                .library
+                .lock()
+                .map_err(|_| "Library unavailable.")?
+                .playlists()?,
+        ))
+    })
+}
+/// # Safety
+/// Live core for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_playlist_tracks(
+    ptr: *mut Core,
+    id: i64,
+    offset: u32,
+) -> *mut Snapshot {
+    guard(|| {
+        Ok(Snapshot::default().tracks(
+            unsafe { core(ptr) }?
+                .library
+                .lock()
+                .map_err(|_| "Library unavailable.")?
+                .playlist_tracks(id, offset, 500)?,
+        ))
+    })
+}
+/// # Safety
+/// Live core, UTF-8 name and optional bounded ID array for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_playlist_command(
+    ptr: *mut Core,
+    id: i64,
+    command: u32,
+    name: *const c_char,
+    ids: *const i64,
+    count: usize,
+    index: u32,
+) -> *mut Snapshot {
+    guard(|| {
+        if count > 100_000 || (count > 0 && ids.is_null()) {
+            return Err("Invalid playlist selection.".into());
+        }
+        let ids = if count == 0 {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(ids, count) }
+        };
+        let c = unsafe { core(ptr) }?;
+        let lib = c.library.lock().map_err(|_| "Library unavailable.")?;
+        let changed =
+            lib.playlist_command(id, command, unsafe { text(name) }?, ids, index as usize)?;
+        let mut s = Snapshot::default().playlists(lib.playlists()?);
+        s.current_id = changed;
+        Ok(s)
+    })
+}
+/// # Safety
+/// Live core; index identifies an occurrence, including duplicate tracks.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_play_playlist(
+    ptr: *mut Core,
+    id: i64,
+    index: u32,
+) -> *mut Snapshot {
+    guard(|| {
+        let c = unsafe { core(ptr) }?;
+        let rows = c
+            .library
+            .lock()
+            .map_err(|_| "Library unavailable.")?
+            .playlist_tracks(id, 0, u32::MAX)?;
+        c.audio.command(Command::Replace(rows, index as usize))?;
+        Ok(Snapshot::default())
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn snapshot_layout_and_utf8_ownership() {
-        assert_eq!(spiewak_abi_version(), 2);
+        assert_eq!(spiewak_abi_version(), 3);
         assert_eq!(std::mem::size_of::<FolderDto>(), 40);
         assert_eq!(std::mem::size_of::<TrackDto>(), 80);
         let s = Snapshot::default().tracks(vec![Track {

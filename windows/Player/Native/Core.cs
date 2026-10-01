@@ -6,17 +6,22 @@ public sealed record Folder(long Id, long Parent, string Name, string Path, bool
 {
     public override string ToString() => Name;
 }
-public sealed record Track(long Id, long Folder, string Title, string Artist, string Album, string Path,
-    string Artwork, string Codec, double Duration, uint Number, uint Year)
+public sealed class Track(long id, long folder, string title, string artist, string album, string path,
+    string artwork, string codec, double duration, uint number, uint year)
 {
+    public long Id { get; } = id; public long Folder { get; } = folder;
+    public string Title { get; } = title; public string Artist { get; } = artist; public string Album { get; } = album;
+    public string Path { get; } = path; public string Artwork { get; } = artwork; public string Codec { get; } = codec;
+    public double Duration { get; } = duration; public uint Number { get; } = number; public uint Year { get; } = year;
     public string Time => Duration > 0 ? FormatTime(Duration) : "—";
     public string TrackNumber => Number > 0 ? Number.ToString("00") : "·";
     public string FileName => System.IO.Path.GetFileName(Path);
     public string ArtistLabel => string.IsNullOrEmpty(Artist) ? "Unknown artist" : Artist;
     public static string FormatTime(double seconds) => TimeSpan.FromSeconds(Math.Max(0, seconds)).ToString(seconds >= 3600 ? @"h\:mm\:ss" : @"m\:ss");
 }
+public sealed record Playlist(long Id, string Name, ulong Count) { public override string ToString() => $"{Name} · {Count}"; }
 public sealed record Result(IReadOnlyList<Folder> Folders, IReadOnlyList<Track> Tracks, double Position,
-    long CurrentId, long CurrentIndex, ulong Revision, bool Playing, float Volume, uint Flags, string Error, string Message);
+    long CurrentId, long CurrentIndex, ulong Revision, bool Playing, float Volume, uint Flags, string Error, string Message, IReadOnlyList<Playlist> Playlists);
 
 internal sealed class CoreHandle : SafeHandleZeroOrMinusOneIsInvalid
 {
@@ -43,6 +48,11 @@ internal static class NativeMethods
     [DllImport(Dll, EntryPoint = "spiewak_tracks_sorted", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Sorted(CoreHandle core, long folder, uint offset, uint limit, uint sort);
     [DllImport(Dll, EntryPoint = "spiewak_play_view", CallingConvention = CallingConvention.Cdecl)] internal static extern nint PlayView(CoreHandle core, long folder, long track, uint sort);
 
+    [DllImport(Dll, EntryPoint = "spiewak_playlists", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Playlists(CoreHandle core);
+    [DllImport(Dll, EntryPoint = "spiewak_playlist_tracks", CallingConvention = CallingConvention.Cdecl)] internal static extern nint PlaylistTracks(CoreHandle core, long id, uint offset);
+    [DllImport(Dll, EntryPoint = "spiewak_play_playlist", CallingConvention = CallingConvention.Cdecl)] internal static extern nint PlayPlaylist(CoreHandle core, long id, uint index);
+    [DllImport(Dll, EntryPoint = "spiewak_playlist_command", CallingConvention = CallingConvention.Cdecl)] internal static extern nint PlaylistCommand(CoreHandle core, long id, uint command, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, [In] long[] ids, nuint count, uint index);
+
 }
 public sealed class Core : IDisposable
 {
@@ -52,7 +62,7 @@ public sealed class Core : IDisposable
     {
         public nint Folders; public nuint FolderCount; public nint Tracks; public nuint TrackCount;
         public double Position; public long CurrentId; public long CurrentIndex; public ulong Revision;
-        public uint Playing; public float Volume; public uint Flags; public nint Error; public nint Message;
+        public uint Playing; public float Volume; public uint Flags; public nint Error; public nint Message; public nint Playlists; public nuint PlaylistCount;
     }
     [StructLayout(LayoutKind.Sequential)]
     private struct FolderRow
@@ -63,9 +73,10 @@ public sealed class Core : IDisposable
         public long Id, Folder; public nint Title, Artist, Album, Path, Artwork, Codec;
         public double Duration; public uint Number, Year;
     }
+    [StructLayout(LayoutKind.Sequential)] private struct PlaylistRow { public long Id; public nint Name; public ulong Count; }
     public Core(string databasePath)
     {
-        if (NativeMethods.Version() != 2 || Marshal.SizeOf<FolderRow>() != 40 || Marshal.SizeOf<TrackRow>() != 80 || Marshal.SizeOf<Header>() != 96)
+        if (NativeMethods.Version() != 3 || Marshal.SizeOf<FolderRow>() != 40 || Marshal.SizeOf<TrackRow>() != 80 || Marshal.SizeOf<Header>() != 112)
             throw new InvalidOperationException("The native core has an incompatible ABI. Rebuild the application.");
         handle = new CoreHandle(NativeMethods.Open(databasePath));
         if (handle.IsInvalid) throw new IOException($"Cannot open the library cache at {databasePath}. Check folder permissions.");
@@ -88,7 +99,9 @@ public sealed class Core : IDisposable
                 var row = Marshal.PtrToStructure<TrackRow>(header.Tracks + checked((nint)i * Marshal.SizeOf<TrackRow>()));
                 tracks.Add(new(row.Id, row.Folder, Text(row.Title), Text(row.Artist), Text(row.Album), Text(row.Path), Text(row.Artwork), Text(row.Codec), row.Duration, row.Number, row.Year));
             }
-            return new(folders, tracks, header.Position, header.CurrentId, header.CurrentIndex, header.Revision, header.Playing != 0, header.Volume, header.Flags, Text(header.Error), Text(header.Message));
+            var playlists = new List<Playlist>();
+            for (nuint i = 0; i < header.PlaylistCount; i++) { var row = Marshal.PtrToStructure<PlaylistRow>(header.Playlists + checked((nint)i * Marshal.SizeOf<PlaylistRow>())); playlists.Add(new(row.Id, Text(row.Name), row.Count)); }
+            return new(folders, tracks, header.Position, header.CurrentId, header.CurrentIndex, header.Revision, header.Playing != 0, header.Volume, header.Flags, Text(header.Error), Text(header.Message), playlists);
         }
         finally { NativeMethods.Free(pointer); }
     }
@@ -104,5 +117,9 @@ public sealed class Core : IDisposable
     public Result Now() => Read(NativeMethods.Now(handle));
     public Result Queue() => Checked(NativeMethods.Queue(handle));
     public Result Selection(IEnumerable<Track> tracks, uint mode) { var ids = tracks.Select(t => t.Id).ToArray(); return Checked(NativeMethods.Selection(handle, ids, (nuint)ids.Length, mode)); }
+    public Result Playlists() => Checked(NativeMethods.Playlists(handle));
+    public Result PlaylistTracks(long id, uint offset = 0) => Checked(NativeMethods.PlaylistTracks(handle, id, offset));
+    public Result PlayPlaylist(long id, uint index) => Checked(NativeMethods.PlayPlaylist(handle, id, index));
+    public Result PlaylistCommand(long id, uint command, string name = "", IEnumerable<Track>? rows = null, uint index = 0) { var ids = rows?.Select(t => t.Id).ToArray() ?? []; return Checked(NativeMethods.PlaylistCommand(handle, id, command, name, ids, (nuint)ids.Length, index)); }
     public void Dispose() => handle.Dispose();
 }

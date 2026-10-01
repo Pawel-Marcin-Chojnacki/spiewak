@@ -25,7 +25,7 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 
 - No Opus decoder in pinned Rodio/Symphonia graph. Files are indexed but playback reports an error.
 - No watcher, incremental event synchronization or stable file IDs across rename/move yet; use Rescan. No album classification or derived album/artist catalog.
-- No embedded-artwork extraction/cache, tag editing, playlists, Smart Inbox, provider integrations or Undo. All file mutation is absent/disabled.
+- No embedded-artwork extraction/cache, tag editing, Smart Inbox, provider integrations or Undo. All file mutation is absent/disabled.
 - No gapless guarantee, ReplayGain, output-device selector or global media keys. Mute is implemented.
 - Mixed queues, selection append/play-next, upcoming edits/clear, queue jump, shuffle upcoming, repeat off/queue/track and mute are implemented. Restart queue persistence remains open.
 - Tree expansion/layout/density are not persisted; no resizable left panel or forward navigation.
@@ -59,3 +59,7 @@ Actual dark sample-library shell was visually inspected in Parallels on 2026-10-
 ## Search milestone
 
 SQLite schema 2 adds Unicode FTS5 indexes for title/artist/album/path and folder name/path. Safe prefix queries return at most 200 tracks and 30 folders. Search-as-you-type uses a 220 ms debounce and discards obsolete UI results. Ctrl+F, Escape and Down support keyboard search. Six native folder sort modes keep paging and folder playback order consistent. Forward history uses Alt+Right. Nine Rust tests and C# ABI search/sort/rename checks pass. Artists/albums grouped result sections and advanced filters remain later work.
+
+## Playlist milestone
+
+SQLite schema 3 stores ordered playlists, including duplicate occurrences. Create/save queue is atomic; append resolves all selected IDs before mutation. Rename, remove/reorder items, soft-delete and restore playlist are connected to native UI. Missing files retain snapshot labels/paths as unavailable entries. Playlist playback uses occurrence index, not track ID. Ten Rust tests plus C# create/append/reorder/delete/restore/restart/missing-file checks pass. UI list rows have reference identity so duplicate occurrences are selected independently. M3U import/export and smart playlists remain open.

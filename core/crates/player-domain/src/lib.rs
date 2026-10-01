@@ -184,3 +184,10 @@ mod tests {
         assert_eq!(q.advance(true, 1).unwrap().id, 1);
     }
 }
+
+#[derive(Clone, Debug)]
+pub struct Playlist {
+    pub id: i64,
+    pub name: String,
+    pub count: u64,
+}

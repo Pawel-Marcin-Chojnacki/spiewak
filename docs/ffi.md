@@ -1,4 +1,4 @@
-# Native boundary (ABI 2)
+# Native boundary (ABI 3)
 
 There is no localhost service, IPC or JSON boundary. C# SafeHandle pins the core during P/Invoke and defers close while calls are active. Rust panic guards turn internal failures into error snapshots. Invalid/dangling foreign pointers remain a caller contract, not something Rust can safely validate.
 
@@ -13,3 +13,5 @@ Interoptopus was evaluated for the foundation. Manual DTO declarations keep this
 Playback flags: bit 0 mute; bits 1–2 repeat (0 off, 1 queue, 2 track). Selection accepts a bounded i64 ID array; all IDs resolve before audio/queue mutation. Commands 7 mute, 8 cycle repeat, 9 shuffle upcoming, 10 remove, 11/12 move, 13 clear upcoming, 14 jump within existing queue. Queue item indexes distinguish duplicate tracks.
 
 Search and sorted folder APIs return existing owned snapshots. Sort is a validated enum; play_view constructs the whole folder queue in that same order. The UI never sends SQL.
+
+ABI 3 appends a playlist pointer/count to the snapshot prefix (112 bytes total). Playlist DTO is 24 bytes (i64 ID, UTF-8 name, u64 count). Playlist commands: 0 create with optional selection, 1 rename, 2 soft-delete, 3 append, 4 remove occurrence, 5/6 move up/down, 7 restore.

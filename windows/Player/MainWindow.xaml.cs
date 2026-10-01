@@ -52,7 +52,7 @@ public partial class MainWindow : Window
                 await Task.Run(() => core.AddRoot(sample));
                 Title = "Śpiewak — Demo collection";
             }
-            await ReloadTree(); timer.Start();
+            await ReloadTree(); await ReloadPlaylists(); timer.Start();
             var roots = await Task.Run(() => core.Folders());
             if (roots.Folders.Count > 0) await Browse(roots.Folders[0], false);
             // Cached rows appear first. Reconciliation uses a separate SQLite WAL connection.
@@ -84,6 +84,7 @@ public partial class MainWindow : Window
     private async Task Browse(Folder folder, bool remember)
     {
         if (core is null) return;
+        currentPlaylist = 0; PlaylistTools.Visibility = Visibility.Collapsed; SortBox.Visibility = Visibility.Visible;
         changingSearch = true; SearchBox.Text = ""; changingSearch = false; searchTimer.Stop();
         var version = ++navigationVersion;
         var trackTask = Task.Run(() => core.Tracks(folder.Id, 0, sortOrder)); var folderTask = Task.Run(() => core.Folders(folder.Id));
@@ -104,6 +105,7 @@ public partial class MainWindow : Window
     private async void ChildFolderClicked(object sender, ItemClickEventArgs args) { if (args.ClickedItem is Folder folder) await TryBrowse(folder); }
     private async void LoadMore(object sender, RoutedEventArgs args)
     {
+        if (currentPlaylist != 0) { await MorePlaylist(); return; }
         if (core is null || currentFolder is null) return;
         var folder = currentFolder; var version = navigationVersion; MoreButton.IsEnabled = false;
         try { var result = await Task.Run(() => core.Tracks(folder.Id, (uint)tracks.Count, sortOrder)); if (closed || version != navigationVersion) return; foreach (var track in result.Tracks) tracks.Add(track); MoreButton.Visibility = result.Tracks.Count == 500 ? Visibility.Visible : Visibility.Collapsed; FolderSummary.Text = $"{tracks.Count} tracks loaded · {folder.Path}"; }
@@ -135,7 +137,7 @@ public partial class MainWindow : Window
     }
     private async void Rescan(object sender, RoutedEventArgs args) => await Scan(null);
     private async Task Play(Track track)
-    { if (core is null) return; var search = SearchBox.Text.Trim().Length > 0; var sort = sortOrder; try { await Task.Run(() => search ? core.Selection(new[] { track }, 0) : core.Play(track.Folder, track.Id, sort)); } catch (Exception e) { Error(e); } }
+    { if (core is null) return; var search = SearchBox.Text.Trim().Length > 0; var sort = sortOrder; var playlist = currentPlaylist; var index = TrackList.SelectedItem == track ? TrackList.SelectedIndex : tracks.IndexOf(track); try { await Task.Run(() => playlist != 0 ? core.PlayPlaylist(playlist, (uint)Math.Max(0,index)) : search ? core.Selection(new[] { track }, 0) : core.Play(track.Folder, track.Id, sort)); } catch (Exception e) { Error(e); } }
     private async void TrackDoubleTapped(object sender, DoubleTappedRoutedEventArgs args) { if (TrackList.SelectedItem is Track track) await Play(track); }
     private async void PlaySelected(object sender, RoutedEventArgs args) => await Selection(0);
     private async void AddNext(object sender, RoutedEventArgs args) => await Selection(2);

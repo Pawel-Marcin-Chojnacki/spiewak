@@ -4,6 +4,7 @@ use lofty::{
     tag::{Accessor, ItemKey},
 };
 use player_domain::{Folder, Track};
+mod playlists;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::{
     fs,
@@ -107,7 +108,7 @@ impl Library {
         let schema_version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if schema_version > 2 {
+        if schema_version > 3 {
             return Err("This library cache belongs to a newer version of Spiewak. Update the app before opening it.".into());
         }
         db.busy_timeout(std::time::Duration::from_secs(10))
@@ -136,6 +137,13 @@ impl Library {
                 INSERT INTO track_search(track_search) VALUES('rebuild');
                 INSERT INTO folder_search(folder_search) VALUES('rebuild');
                 PRAGMA user_version=2; RELEASE migration;").map_err(|e|e.to_string())?;
+        }
+        if schema_version < 3 {
+            db.execute_batch("SAVEPOINT migration;
+              CREATE TABLE IF NOT EXISTS playlists(id INTEGER PRIMARY KEY,name TEXT NOT NULL,deleted INTEGER NOT NULL DEFAULT 0);
+              CREATE TABLE IF NOT EXISTS playlist_items(id INTEGER PRIMARY KEY,playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,track_id INTEGER REFERENCES tracks(id) ON DELETE SET NULL,path TEXT NOT NULL,title TEXT NOT NULL,artist TEXT NOT NULL,album TEXT NOT NULL,position INTEGER NOT NULL);
+              CREATE INDEX IF NOT EXISTS playlist_order ON playlist_items(playlist_id,position,id);
+              PRAGMA user_version=3; RELEASE migration;").map_err(|e|e.to_string())?;
         }
         Ok(Self { db })
     }
@@ -545,6 +553,42 @@ mod tests {
         drop(lib);
         let lib = Library::open(&p.join("index.db")).unwrap();
         assert_eq!(lib.search("zeb").unwrap().1.len(), 1);
+        drop(lib);
+        fs::remove_dir_all(p).unwrap();
+    }
+    #[test]
+    fn playlist_persists_order_duplicates_and_missing_files() {
+        let p = sandbox();
+        let root = p.join("Music");
+        fs::create_dir(&root).unwrap();
+        wav(&root.join("one.wav"));
+        wav(&root.join("two.wav"));
+        let lib = Library::open(&p.join("index.db")).unwrap();
+        lib.add_root(&root).unwrap();
+        let folder = lib.folders(0).unwrap()[0].id;
+        let tracks = lib.tracks(folder, 0, 500).unwrap();
+        let id = lib.playlist_command(0, 0, "Evening", &[], 0).unwrap();
+        lib.playlist_command(id, 3, "", &[tracks[0].id, tracks[1].id, tracks[0].id], 0)
+            .unwrap();
+        lib.playlist_command(id, 4, "", &[], 2).unwrap();
+        lib.playlist_command(id, 6, "", &[], 0).unwrap();
+        assert_eq!(lib.playlist_tracks(id, 0, 500).unwrap()[0].id, tracks[1].id);
+        assert!(
+            lib.playlist_command(id, 3, "", &[tracks[0].id, -999], 0)
+                .is_err()
+        );
+        assert_eq!(lib.playlists().unwrap()[0].count, 2);
+        lib.playlist_command(id, 2, "", &[], 0).unwrap();
+        assert!(lib.playlists().unwrap().is_empty());
+        lib.playlist_command(id, 7, "", &[], 0).unwrap();
+        fs::remove_file(&tracks[1].path).unwrap();
+        lib.reconcile().unwrap();
+        drop(lib);
+        let lib = Library::open(&p.join("index.db")).unwrap();
+        let rows = lib.playlist_tracks(id, 0, 500).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, 0);
+        assert!(rows[0].title.starts_with("Unavailable"));
         drop(lib);
         fs::remove_dir_all(p).unwrap();
     }
