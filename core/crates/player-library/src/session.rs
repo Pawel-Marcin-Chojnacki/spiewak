@@ -113,6 +113,7 @@ mod tests {
             .playlist_command(0, 0, "Keep my playlist", &[], 0)
             .unwrap();
         super::super::listening::drop_migration(&lib.db);
+        super::super::playlist_files::drop_migration(&lib.db);
         lib.db.execute_batch("DROP TRIGGER session_track_snapshot; DROP TABLE session_items; DROP TABLE playback_session; ALTER TABLE tracks DROP COLUMN embedded_art; ALTER TABLE tracks DROP COLUMN art_checked; ALTER TABLE folders DROP COLUMN artwork; ALTER TABLE folders DROP COLUMN art_source; PRAGMA user_version=6;").unwrap();
         drop(lib);
         let lib = Library::open(&db).unwrap();

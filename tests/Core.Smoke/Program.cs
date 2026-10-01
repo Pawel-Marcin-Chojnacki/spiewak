@@ -154,6 +154,7 @@ try
     }
     using (var core = new Core(db)) { Assert(core.Folder(folderId).Folders.Single().Kind == FolderKind.UserCollection, "Folder presentation survives restart"); core.SetFolderKind(folderId, FolderKind.Auto); Assert(core.Folder(folderId).Folders.Single().Kind == FolderKind.LooseTracks, "One remaining tagged song stays a loose track in automatic mode"); Assert(core.Playlists().Playlists.Single().Count == 2, "Playlist survives restart"); core.Rescan(); Assert(core.PlaylistTracks(playlistId).Tracks.Any(t => t.Id == 0), "Unavailable playlist entry remains visible"); Assert(core.Tracks(folderId).Tracks.Count == 1 && core.Tracks(folderId).Tracks[0].Id == trackId, "Cache persists and external delete reconciles after restart"); }
     await ListeningChecks(sandbox, args.Contains("--audio"));
+    await PlaylistFileChecks(sandbox, args.Contains("--audio"));
     await SessionChecks(sandbox, dll, args.Contains("--audio"));
     var artworkFfmpeg = Array.IndexOf(args, "--ffmpeg");
     await ArtworkChecks(sandbox, args.Contains("--audio"), artworkFfmpeg >= 0 ? args[artworkFfmpeg + 1] : null);
@@ -282,7 +283,7 @@ static async Task ArtworkChecks(string sandbox, bool audio, string? ffmpeg)
     var rootId = core.Folders().Folders.Single().Id; var children = core.Folders(rootId).Folders;
     var albumFolder = children.Single(f => f.Name == "Album"); var looseFolder = children.Single(f => f.Name == "Loose");
     var albumTracks = core.Tracks(albumFolder.Id).Tracks; var looseTracks = core.Tracks(looseFolder.Id).Tracks;
-    Assert(albumFolder.Kind == FolderKind.Album && File.Exists(albumFolder.Artwork) && albumTracks.All(t => t.Artwork == albumFolder.Artwork), "Folder artwork crosses ABI 6 and is shared only by an album folder");
+    Assert(albumFolder.Kind == FolderKind.Album && File.Exists(albumFolder.Artwork) && albumTracks.All(t => t.Artwork == albumFolder.Artwork), "Folder artwork crosses ABI 7 and is shared only by an album folder");
     Assert(looseFolder.Kind == FolderKind.LooseTracks && looseFolder.Artwork.Length == 0 && looseTracks[0].Artwork != looseTracks[1].Artwork, "Unrelated songs keep separate embedded artwork instead of their folder cover");
     Assert(PngSize(looseTracks[0].Artwork) == (512, 256) && PngSize(looseTracks[1].Artwork) == (100, 200), "Cache thumbnails are bounded and preserve aspect ratio");
     Assert(looseTracks.All(t => t.Artwork.StartsWith(Path.ChangeExtension(db, "artwork"), StringComparison.OrdinalIgnoreCase)), "Artwork is written only under the app database cache directory");
@@ -362,7 +363,7 @@ static async Task ListeningChecks(string sandbox, bool audio)
     using(var core=new Core(db))
     {
         core.AddRoot(root); var rows=core.ListeningTracks(1).Tracks; first=rows.Single(t=>t.Path==a); second=rows.Single(t=>t.Path==b);
-        Assert(rows.Count==2 && rows.All(t=>t.EventTime>0),"Recently added exposes first-indexed time through ABI 6");
+        Assert(rows.Count==2 && rows.All(t=>t.EventTime>0),"Recently added exposes first-indexed time through ABI 7");
         core.Favorites(new[]{first,first},true); core.Favorites(new[]{first},true);
         Assert(core.ListeningTracks(0).Tracks.Count==1 && core.Tracks(first.Folder).Tracks.Single(t=>t.Id==first.Id).Favorite,"Favorite is idempotent and visible in ordinary folder rows");
         Assert(core.Search("One").Tracks.Single().Favorite,"Search rows share favorite state");
@@ -404,5 +405,55 @@ static async Task ListeningChecks(string sandbox, bool audio)
         if(audio) Assert(core.ListeningTracks(2).Tracks.Any(t=>t.Id==0 && t.ReferenceId==first.Id && t.Title.StartsWith("Unavailable · ")),"History retains unavailable occurrences and last-known paths");
         core.Favorites(new[]{ghost},false); Assert(core.ListeningTracks(0).Tracks.Count==0,"User can remove an unavailable favorite");
         Wave(renamed,350); core.Rescan(); Assert(!core.Search("Renamed").Tracks.Single().Favorite,"Replacement file does not inherit a deleted track's favorite");
+    }
+}
+
+static async Task PlaylistFileChecks(string sandbox, bool audio)
+{
+    var root = Path.Combine(sandbox, "External Żółć"); Directory.CreateDirectory(root);
+    var one = Path.Combine(root, "Żółć.wav"); var two = Path.Combine(root, "Second.wav"); Wave(one, 280); Wave(two, 300);
+    var before = SHA256.HashData(File.ReadAllBytes(one));
+    var path = Path.Combine(root, "mix.m3u8");
+    File.WriteAllText(path, "\uFEFF#EXTM3U\r\n#PLAYLIST:Moja kolejka\r\nŻółć.wav\r\nSecond.wav\r\nŻółć.wav\r\n#EXTINF:42,Missing title\r\nmissing.wav\r\n", new UTF8Encoding(false));
+    var db = Path.Combine(sandbox, "playlist-files.db"); long id, firstId; int savedCount;
+    using (var core = new Core(db))
+    {
+        var result = core.ImportPlaylist(path); id = result.CurrentId;
+        var rows = core.PlaylistTracks(id).Tracks; firstId = rows[0].Id;
+        Assert(rows.Count == 4 && rows[0].Id > 0 && rows[0].Id == rows[2].Id && rows.All(t => t.Folder == 0), "M3U8 Unicode/CRLF/relative paths and duplicate occurrences cross ABI 7");
+        Assert(rows[3].Id == 0 && rows[3].Title == "Unavailable · Missing title" && rows[3].Duration == 42, "Missing imported entries keep their labels and durations");
+        Assert(core.Folders().Folders.Count == 0 && core.Queue().Tracks.Count == 0 && !core.Now().Playing, "Import never creates artificial folders/albums or starts audio");
+        core.DropFiles(new[] { one, path, two }); savedCount = 6;
+        Assert(core.Queue().Tracks.Count == savedCount && core.Queue().Tracks[0].Id == firstId && !core.Now().Playing, "UTF-8 native path array appends all dropped occurrences without autoplay");
+        var saved = core.SaveQueuePlaylist("Full queue").CurrentId;
+        Assert(core.PlaylistTracks(saved).Tracks.Count == savedCount && core.PlaylistTracks(saved).Tracks[4].Id == 0, "Save queue includes unavailable snapshots and duplicates");
+        var exported = Path.Combine(root, "Export Żółć.m3u8"); core.ExportPlaylist(saved, exported);
+        var content = File.ReadAllText(exported); Assert(content.Contains("\nŻółć.wav\n") && content.Contains("#EXTINF:42,Missing title"), "Export writes portable relative UTF-8 references");
+        try { core.ExportPlaylist(saved, exported); throw new Exception("Existing export was overwritten"); } catch (InvalidOperationException) { }
+        Assert(File.ReadAllText(exported) == content, "Existing playlist destination remains unchanged");
+        var imported = core.ImportPlaylist(exported).CurrentId; Assert(core.PlaylistTracks(imported).Tracks.Count == savedCount, "Export/import round trip retains occurrence count");
+        var bad = Path.Combine(root, "bad.m3u8"); File.WriteAllText(bad, "Żółć.wav\nhttps://example.invalid/song.mp3\n");
+        var count = core.Playlists().Playlists.Count;
+        try { core.ImportPlaylist(bad); throw new Exception("Stream playlist accepted"); } catch (InvalidOperationException) { }
+        try { core.DropFiles(new[] { one, bad }); throw new Exception("Invalid drop accepted"); } catch (InvalidOperationException) { }
+        Assert(core.Playlists().Playlists.Count == count && core.Queue().Tracks.Count == savedCount, "Bad import/drop preserves prior playlists and queue");
+        core.Favorites(new[] { rows[0] }, true);
+        if (audio)
+        {
+            core.PlayPlaylist(id, 0); await Wait(() => core.Now().Playing && core.Now().Position > 0.1, "Unregistered external file plays through WASAPI");
+            core.Command(1); var paused = core.Now(); core.DropFiles(new[] { two });
+            Assert(!core.Now().Playing && core.Now().CurrentId == paused.CurrentId, "Drop into paused playback preserves pause and current occurrence");
+            core.PlayPlaylist(id, 2); core.Command(5, 7.9); await Task.Delay(500);
+            Assert(!core.Now().Playing && core.Now().Error.Length > 0, "Unavailable imported occurrence stops with a visible error instead of disappearing");
+            core.Command(2);
+        }
+        core.AddRoot(root);
+        Assert(core.Search("Żółć").Tracks.Single(t => t.Id == firstId).Id == firstId && core.Search("Żółć").Tracks.Single(t => t.Id == firstId).Favorite && core.Search("Żółć").Tracks.Single(t => t.Id == firstId).Folder > 0, "Adding real folder promotes external file while preserving stable ID and favorite");
+        Assert(SHA256.HashData(File.ReadAllBytes(one)).SequenceEqual(before), "Import, export and drop never write original music bytes");
+    }
+    using (var core = new Core(db))
+    {
+        Assert(!core.Now().Playing && core.PlaylistTracks(id).Tracks.Count == 4, "Imported playlists survive restart without autoplay");
+        Assert(core.PlaylistTracks(id).Tracks[0].Id == firstId, "Imported reference follows promotion into the real library");
     }
 }

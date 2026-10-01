@@ -17,7 +17,7 @@ Windows 11, Visual Studio 2026 (C++ desktop tools / Windows SDK), .NET 10 and Ru
 
 When cross-building x64 on ARM64, the x64 .NET 10 SDK must also be installed for native smoke tests. GitHub CI uses Windows x64.
 
-Click **Add music folder**, browse your real directory tree, and double-click a track. Space toggles playback; Enter plays the selection; Alt+Left goes back. The app never changes your music. Its database lives in `%LOCALAPPDATA%/Spiewak` and can be rebuilt from your folders.
+Click **Add music folder**, browse your real directory tree, and double-click a track. Space toggles playback; Enter plays the selection; Alt+Left goes back. The app never changes your music. Its database lives in `%LOCALAPPDATA%/Spiewak`. Keep it: besides rebuildable metadata it contains your playlists, favorites, history and playback state.
 
 ## Windows audio integration test
 
@@ -37,10 +37,12 @@ python tools/generate-demo.py "$env:USERPROFILE\Music\Spiewak Demo"
 
 The generator refuses to overwrite an existing folder. It downloads no music. Audio tests use low-amplitude sine tones, create a temporary library, and remove it afterwards.
 
+Import UTF-8 M3U8 beside Playlists; export from a playlist to a new filename. Drop files, folders or M3U8 on the browser/queue to append without autoplay. Drop folders on the folder tree to add library roots. See [playlist files and limits](docs/PLAYLIST-FILES.md).
+
 See [architecture](docs/architecture.md), [library model](docs/library-model.md), [audio](docs/audio-engine.md), [FFI](docs/ffi.md), [UX](docs/ux.md), [Smart Inbox policy](docs/smart-inbox.md), and the [complete product plan](docs/master-plan.md). This delivery covers foundation and the first useful playback path; it is not the complete roadmap.
 
 ## Product research
 
-[Competitor features, user feedback and implementation priorities (2026-10-01)](docs/research/music-players-2026-10-01.md). The second household user’s specific requirements are pending confirmation; the report does not invent them.
+[Competitor features, user feedback and implementation priorities (2026-10-01)](docs/research/music-players-2026-10-01.md). Confirmed household needs prioritize real folders, quiet singles, automatic artwork/tag discovery and safe cleanup of downloaded MP3s.
 
 Confirmed household product requirements: [docs/household-requirements.md](docs/household-requirements.md).

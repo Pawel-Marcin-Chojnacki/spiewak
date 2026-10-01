@@ -476,6 +476,7 @@ mod tests {
         };
         lib.save_session(&session, true).unwrap();
         super::super::listening::drop_migration(&lib.db);
+        super::super::playlist_files::drop_migration(&lib.db);
         lib.db.execute_batch("ALTER TABLE tracks DROP COLUMN embedded_art; ALTER TABLE tracks DROP COLUMN art_checked; ALTER TABLE folders DROP COLUMN artwork; ALTER TABLE folders DROP COLUMN art_source; PRAGMA user_version=7;").unwrap();
         drop(lib);
         let lib = Library::open(&db).unwrap();

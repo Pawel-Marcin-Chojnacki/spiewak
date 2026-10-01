@@ -247,7 +247,7 @@ unsafe fn text<'a>(ptr: *const c_char) -> Result<&'a str, String> {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn spiewak_abi_version() -> u32 {
-    6
+    7
 }
 /// # Safety
 /// `path` must point to a valid NUL-terminated UTF-8 database path during this call.
@@ -627,6 +627,109 @@ pub unsafe extern "C" fn spiewak_playlist_command(
         Ok(s)
     })
 }
+
+/// # Safety
+/// Live core and a NUL-terminated UTF-8 local playlist path for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_import_playlist(
+    ptr: *mut Core,
+    path: *const c_char,
+) -> *mut Snapshot {
+    guard(|| {
+        let c = unsafe { core(ptr) }?;
+        if c.scanning.swap(true, Ordering::AcqRel) {
+            return Err("A library scan or file import is already running.".into());
+        }
+        let _guard = ScanGuard(&c.scanning);
+        let lib = Library::open(&c.path)?;
+        let (id, warnings) =
+            lib.import_playlist(PathBuf::from(unsafe { text(path) }?).as_path())?;
+        let message = format!(
+            "Imported playlist. Music files remain in their folders. {}",
+            warnings.join(" ")
+        );
+        c.monitor.notice(&message);
+        let mut s = Snapshot::default().playlists(lib.playlists()?);
+        s.current_id = id;
+        s.message = s.string(&message);
+        Ok(s)
+    })
+}
+/// # Safety
+/// Live core, playlist ID and a NUL-terminated UTF-8 destination path. Relative is 0 or 1.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_export_playlist(
+    ptr: *mut Core,
+    id: i64,
+    path: *const c_char,
+    relative: u32,
+) -> *mut Snapshot {
+    guard(|| {
+        if relative > 1 {
+            return Err("Invalid playlist path mode.".into());
+        }
+        let c = unsafe { core(ptr) }?;
+        let lib = Library::open(&c.path)?;
+        lib.export_playlist(
+            id,
+            PathBuf::from(unsafe { text(path) }?).as_path(),
+            relative == 1,
+        )?;
+        let mut s = Snapshot::default();
+        s.message = s.string("Playlist exported. Music files remain unchanged.");
+        Ok(s)
+    })
+}
+/// # Safety
+/// Live core and count valid pointers to NUL-terminated UTF-8 paths. Appends without starting playback.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_drop_files(
+    ptr: *mut Core,
+    paths: *const *const c_char,
+    count: usize,
+) -> *mut Snapshot {
+    guard(|| {
+        if count == 0 || count > 100_000 || paths.is_null() {
+            return Err("Drop local audio files, folders or M3U8 playlists.".into());
+        }
+        let paths = unsafe { std::slice::from_raw_parts(paths, count) }
+            .iter()
+            .map(|p| unsafe { text(*p) }.map(PathBuf::from))
+            .collect::<Result<Vec<_>, _>>()?;
+        let c = unsafe { core(ptr) }?;
+        if c.scanning.swap(true, Ordering::AcqRel) {
+            return Err("A library scan or file import is already running.".into());
+        }
+        let _guard = ScanGuard(&c.scanning);
+        let lib = Library::open(&c.path)?;
+        let (rows, warnings) = lib.dropped_tracks(&paths)?;
+        let count = rows.len();
+        c.command(Command::Append(rows, false))?;
+        let message = format!("Added {count} tracks to the queue. {}", warnings.join(" "));
+        c.monitor.notice(&message);
+        let mut s = Snapshot::default();
+        s.message = s.string(&message);
+        Ok(s)
+    })
+}
+/// # Safety
+/// Live core and NUL-terminated UTF-8 playlist name. Saves every queued occurrence including unavailable files.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spiewak_save_queue_playlist(
+    ptr: *mut Core,
+    name: *const c_char,
+) -> *mut Snapshot {
+    guard(|| {
+        let c = unsafe { core(ptr) }?;
+        let rows = c.audio.queue()?;
+        let lib = c.library.lock().map_err(|_| "Library unavailable.")?;
+        let id = lib.save_queue_playlist(unsafe { text(name) }?, &rows)?;
+        let mut s = Snapshot::default().playlists(lib.playlists()?);
+        s.current_id = id;
+        Ok(s)
+    })
+}
+
 /// # Safety
 /// Live core; index identifies an occurrence, including duplicate tracks.
 #[unsafe(no_mangle)]
@@ -806,7 +909,7 @@ mod tests {
     use super::*;
     #[test]
     fn snapshot_layout_and_utf8_ownership() {
-        assert_eq!(spiewak_abi_version(), 6);
+        assert_eq!(spiewak_abi_version(), 7);
         assert_eq!(std::mem::size_of::<FolderDto>(), 64);
         assert_eq!(std::mem::size_of::<TrackDto>(), 104);
         let s = Snapshot::default().tracks(vec![Track {

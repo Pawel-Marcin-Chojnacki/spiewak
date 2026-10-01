@@ -44,6 +44,10 @@ internal static class NativeMethods
     [DllImport("spiewak_core", EntryPoint = "spiewak_play_listening", CallingConvention = CallingConvention.Cdecl)] internal static extern nint PlayListening(CoreHandle core, uint view, uint index);
     [DllImport("spiewak_core", EntryPoint = "spiewak_listening_state", CallingConvention = CallingConvention.Cdecl)] internal static extern nint ListeningState(CoreHandle core);
     private const string Dll = "spiewak_core";
+    [DllImport(Dll, EntryPoint = "spiewak_import_playlist", CallingConvention = CallingConvention.Cdecl)] internal static extern nint ImportPlaylist(CoreHandle core, [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+    [DllImport(Dll, EntryPoint = "spiewak_export_playlist", CallingConvention = CallingConvention.Cdecl)] internal static extern nint ExportPlaylist(CoreHandle core, long id, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, uint relative);
+    [DllImport(Dll, EntryPoint = "spiewak_drop_files", CallingConvention = CallingConvention.Cdecl)] internal static extern nint DropFiles(CoreHandle core, [In] nint[] paths, nuint count);
+    [DllImport(Dll, EntryPoint = "spiewak_save_queue_playlist", CallingConvention = CallingConvention.Cdecl)] internal static extern nint SaveQueuePlaylist(CoreHandle core, [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
     [DllImport(Dll, EntryPoint = "spiewak_abi_version", CallingConvention = CallingConvention.Cdecl)] internal static extern uint Version();
     [DllImport(Dll, EntryPoint = "spiewak_open", CallingConvention = CallingConvention.Cdecl)] internal static extern nint Open([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
     [DllImport(Dll, EntryPoint = "spiewak_last_open_error", CallingConvention = CallingConvention.Cdecl)] internal static extern nint OpenError();
@@ -94,7 +98,7 @@ public sealed class Core : IDisposable
     [StructLayout(LayoutKind.Sequential)] private struct PlaylistRow { public long Id; public nint Name; public ulong Count; }
     public Core(string databasePath)
     {
-        if (NativeMethods.Version() != 6 || Marshal.SizeOf<FolderRow>() != 64 || Marshal.SizeOf<TrackRow>() != 104 || Marshal.SizeOf<Header>() != 112)
+        if (NativeMethods.Version() != 7 || Marshal.SizeOf<FolderRow>() != 64 || Marshal.SizeOf<TrackRow>() != 104 || Marshal.SizeOf<Header>() != 112)
             throw new InvalidOperationException("The native core has an incompatible ABI. Rebuild the application.");
         handle = new CoreHandle(NativeMethods.Open(databasePath));
         if (handle.IsInvalid) throw new IOException($"Cannot open the library at {databasePath}: {Text(NativeMethods.OpenError())}");
@@ -147,5 +151,20 @@ public sealed class Core : IDisposable
     public Result ListeningState() => Checked(NativeMethods.ListeningState(handle));
     public Result PlayListening(uint view, uint index = 0) => Checked(NativeMethods.PlayListening(handle, view, index));
     public Result Favorites(IEnumerable<Track> tracks, bool favorite) { var ids = tracks.Select(t => t.ReferenceId).Distinct().ToArray(); return Checked(NativeMethods.Favorites(handle, ids, (nuint)ids.Length, favorite ? 1u : 0u)); }
+    public Result ImportPlaylist(string path) => Checked(NativeMethods.ImportPlaylist(handle, path));
+    public Result ExportPlaylist(long id, string path, bool relative = true) => Checked(NativeMethods.ExportPlaylist(handle, id, path, relative ? 1u : 0u));
+    public Result DropFiles(IEnumerable<string> paths)
+    {
+        var values = paths.Take(100_001).ToArray();
+        if (values.Length == 0 || values.Length > 100_000) throw new ArgumentException("Drop between 1 and 100,000 paths.");
+        var pointers = new nint[values.Length];
+        try
+        {
+            for (var i = 0; i < values.Length; i++) pointers[i] = Marshal.StringToCoTaskMemUTF8(values[i]);
+            return Checked(NativeMethods.DropFiles(handle, pointers, (nuint)pointers.Length));
+        }
+        finally { foreach (var pointer in pointers) Marshal.FreeCoTaskMem(pointer); }
+    }
+    public Result SaveQueuePlaylist(string name) => Checked(NativeMethods.SaveQueuePlaylist(handle, name));
     public void Dispose() => handle.Dispose();
 }

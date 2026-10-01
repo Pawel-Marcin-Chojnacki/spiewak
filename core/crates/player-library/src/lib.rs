@@ -8,6 +8,7 @@ mod artwork;
 mod identity;
 mod listening;
 mod monitor;
+mod playlist_files;
 mod playlists;
 mod presentation;
 mod session;
@@ -114,7 +115,7 @@ impl Library {
         let schema_version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if schema_version > 9 {
+        if schema_version > 10 {
             return Err("This library cache belongs to a newer version of Spiewak. Update the app before opening it.".into());
         }
         db.busy_timeout(std::time::Duration::from_secs(10))
@@ -200,6 +201,9 @@ impl Library {
         if schema_version < 9 {
             listening::migrate(&db)?;
         }
+        if schema_version < 10 {
+            playlist_files::migrate(&db)?;
+        }
         Ok(Self {
             db,
             artwork_dir: path.with_extension("artwork"),
@@ -251,6 +255,10 @@ impl Library {
                 Err(e) => report.warnings.push(e),
             }
         }
+        let external = self.reconcile_external()?;
+        report.tracks += external.tracks;
+        report.changed |= external.changed;
+        report.warnings.extend(external.warnings);
         Ok(report)
     }
     fn scan_root(&self, root: &str) -> Result<ScanReport> {
@@ -381,17 +389,25 @@ impl Library {
                     let stored_path = display_path(&path);
                     let modified = stamp(&meta);
                     let identity = identity::file_identity(&path);
+                    // An explicitly opened file may be promoted into this root. A different
+                    // NTFS file at its old path must not inherit the external reference's ID.
+                    if let Some(identity) = identity.as_deref() {
+                        report.changed |= self.db.execute("DELETE FROM tracks WHERE path=? AND folder_id IS NULL AND file_identity IS NOT NULL AND file_identity!=?", params![stored_path,identity]).map_err(|e|e.to_string())? > 0;
+                    }
                     self.relocate("tracks", &stored_path, identity.as_deref(), root_id)?;
-                    let old: Option<(i64, i64, i64, String)> = self
+                    let old: Option<(i64, i64, i64, String, Option<i64>)> = self
                         .db
                         .query_row(
-                            "SELECT size,modified,art_checked,embedded_art FROM tracks WHERE path=?",
+                            "SELECT size,modified,art_checked,embedded_art,folder_id FROM tracks WHERE path=?",
                             [&stored_path],
-                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
                         )
                         .optional()
                         .map_err(|e| e.to_string())?;
-                    if old.as_ref().is_some_and(|(size, time, checked, art)| {
+                    report.changed |= old
+                        .as_ref()
+                        .is_some_and(|(_, _, _, _, old_folder)| *old_folder != Some(folder_id));
+                    if old.as_ref().is_some_and(|(size, time, checked, art, _)| {
                         *size == meta.len() as i64
                             && *time == modified
                             && (*checked == 1 || cache.full())
@@ -399,19 +415,21 @@ impl Library {
                     }) {
                         self.db
                             .execute(
-                                "UPDATE tracks SET epoch=?,file_identity=? WHERE path=?",
-                                params![epoch, identity, stored_path],
+                                "UPDATE tracks SET epoch=?,file_identity=?,folder_id=? WHERE path=?",
+                                params![epoch, identity, folder_id, stored_path],
                             )
                             .map_err(|e| e.to_string())?;
                         continue;
                     }
-                    report.changed |= old.as_ref().is_none_or(|(size, time, _, art)| {
+                    report.changed |= old.as_ref().is_none_or(|(size, time, _, art, _)| {
                         *size != meta.len() as i64
                             || *time != modified
                             || !art.is_empty() && !Path::new(art).is_file()
                     });
                     let t = read_track(&path, folder_id, &mut cache);
-                    report.changed |= old.as_ref().is_none_or(|(_, _, _, art)| art != &t.artwork);
+                    report.changed |= old
+                        .as_ref()
+                        .is_none_or(|(_, _, _, art, _)| art != &t.artwork);
                     let id = self.row_id("tracks", &stored_path)?;
                     self.db.execute("INSERT INTO tracks(id,folder_id,path,title,artist,album,album_artist,artwork,codec,duration,number,year,size,modified,epoch,file_identity,added_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,unixepoch()) ON CONFLICT(path) DO UPDATE SET folder_id=excluded.folder_id,title=excluded.title,artist=excluded.artist,album=excluded.album,album_artist=excluded.album_artist,artwork=excluded.artwork,codec=excluded.codec,duration=excluded.duration,number=excluded.number,year=excluded.year,size=excluded.size,modified=excluded.modified,epoch=excluded.epoch,file_identity=excluded.file_identity",params![id,t.folder_id,t.path,t.title,t.artist,t.album,t.album_artist,t.artwork,t.codec,t.duration,t.number,t.year,meta.len() as i64,modified,epoch,identity]).map_err(|e|e.to_string())?;
                     self.db
@@ -681,7 +699,7 @@ fn folder_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Folder> {
 fn track_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
     Ok(Track {
         id: r.get(0)?,
-        folder_id: r.get(1)?,
+        folder_id: r.get::<_, Option<i64>>(1)?.unwrap_or(0),
         path: r.get(2)?,
         title: r.get(3)?,
         artist: r.get(4)?,

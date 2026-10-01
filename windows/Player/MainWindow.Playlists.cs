@@ -51,7 +51,7 @@ public partial class MainWindow
     private async Task NewPlaylist(IReadOnlyList<Track>? rows)
     {
         if (core is null) return; var name = await PlaylistName(rows is null ? "Create playlist" : "Save queue as playlist"); if (name is null) return;
-        try { var result = await Task.Run(() => core.PlaylistCommand(0, 0, name, rows: rows)); await ReloadPlaylists(); await ShowPlaylist(result.CurrentId); } catch (Exception e) { Error(e); }
+        try { var result = await Task.Run(() => rows is null ? core.PlaylistCommand(0, 0, name) : core.SaveQueuePlaylist(name)); await ReloadPlaylists(); await ShowPlaylist(result.CurrentId); } catch (Exception e) { Error(e); }
     }
     private async void RenamePlaylist(object sender, RoutedEventArgs args)
     {

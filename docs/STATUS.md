@@ -10,12 +10,13 @@ As of 2026-10-01 on Windows 11 ARM64 (Parallels). This is a working foundation/f
 - Lofty title/artist/album/album-artist/number/year/duration; filename fallback; embedded JPEG/PNG plus folder covers, bounded content-addressed thumbnails and per-track isolation for loose folders.
 - Streaming Rust audio on a dedicated worker; folder queue, play/pause/resume/stop/seek/next/previous/volume.
 - Persistent transport, upcoming queue sidebar, path/album inspector, compact rows, hideable queue, Back, Enter/Space/Alt+Left, basic context menu.
+- Local UTF-8 M3U8 import/export and file/folder/playlist drops to queue; external file references do not create synthetic folders or scan neighboring music.
 - Favorites, first-indexed/recently-added view and successful-playback-start history; persistent app state and unavailable snapshots.
 - Cached startup before background reconciliation; rescan external additions/renames/deletions without changing music.
 
 ## Verification
 
-- Rust: thirty unit/integration tests; fmt and clippy with warnings denied.
+- Rust: thirty-seven unit/integration tests; fmt and clippy with warnings denied.
 - Release WinUI build on ARM64; native shell visually inspected in actual VM screenshots.
 - C# ↔ Rust smoke: Unicode paths, actual WAV metadata/tags, folder fidelity, IDs across rescan/restart, external rename/delete, SHA-256 music preservation.
 - Codec integration: generated MP3, FLAC, AAC/M4A, ALAC, Ogg Vorbis and WAV fixtures all index, decode/play and seek successfully on Windows ARM64. Corrupt audio returns an error while previous audio/queue continue. FFmpeg 9.0.2 installed via winget for fixture generation only.
@@ -63,7 +64,7 @@ SQLite schema 2 adds Unicode FTS5 indexes for title/artist/album/path and folder
 
 ## Playlist milestone
 
-SQLite schema 3 stores ordered playlists, including duplicate occurrences. Create/save queue is atomic; append resolves all selected IDs before mutation. Rename, remove/reorder items, soft-delete and restore playlist are connected to native UI. Missing files retain snapshot labels/paths as unavailable entries. Playlist playback uses occurrence index, not track ID. Ten Rust tests plus C# create/append/reorder/delete/restore/restart/missing-file checks pass. UI list rows have reference identity so duplicate occurrences are selected independently. M3U import/export and smart playlists remain open.
+SQLite schema 3 stores ordered playlists, including duplicate occurrences. Create/save queue is atomic; append resolves all selected IDs before mutation. Rename, remove/reorder items, soft-delete and restore playlist are connected to native UI. Missing files retain snapshot labels/paths as unavailable entries. Playlist playback uses occurrence index, not track ID. Ten Rust tests plus C# create/append/reorder/delete/restore/restart/missing-file checks pass. UI list rows have reference identity so duplicate occurrences are selected independently. M3U import/export is implemented in the later playlist-files milestone; smart playlists remain open.
 
 ## Product research
 
@@ -122,3 +123,13 @@ ABI 6 extends Track DTO to 104 bytes with favorite state, original reference ID 
 The audio worker buffers successful starts independently of UI polling; native commands/polls commit and acknowledge them atomically. Pause/resume, seek, append and failed playback are excluded. Uncommitted starts can be lost on abrupt exit; the bounded buffer reports overflow, and database failures retain pending entries for retry while audio continues. See LISTENING.md for semantics and limits.
 
 Thirty Rust tests, fmt/clippy, WinUI ARM64 Release and C# Windows native/audio checks pass, including natural advance, repeat/duplicate occurrences, unavailable favorite removal, rename/restart and music-byte preservation. The actual demo window shows the three sidebar shortcuts and empty-transport heart; sidebar/heart/keyboard interactions remain unverified through Parallels; larger-scale performance, history privacy controls and navigation/scroll polish remain open.
+
+## Playlist files / Explorer integration milestone
+
+Schema 10 allows explicit audio references outside library roots without creating folders or scanning neighboring files. UTF-8 M3U8/M3U import preserves order, repeated occurrences and unavailable labels/durations. Export writes new M3U8 files atomically, uses relative paths where possible and never overwrites existing destinations. Adding a real folder promotes the same external track ID; a replacement NTFS file does not inherit an old reference or favorite. Complete-queue saving retains unavailable snapshots.
+
+ABI 7 adds import/export, bounded UTF-8 path arrays and save-queue calls while retaining Folder/Track/Snapshot sizes 64/104/112. Native WinUI path pickers, Import/Export controls, browser/queue storage-item drops and folder-tree root drops are connected. See PLAYLIST-FILES.md for traversal/format bounds and external-rename limits.
+
+Thirty-seven Rust tests, fmt, clippy with warnings denied, WinUI ARM64 Release and C# native integration pass. Windows WASAPI checks cover unregistered files, import/drop without autoplay, paused-current preservation, unavailable occurrence errors, relative Unicode round trips, queue snapshots, promotion preserving favorites, restart, unchanged music bytes, six codecs and existing session/artwork behavior.
+
+The current demo window launches and shows Import beside Playlists, compact real-folder navigation and a stopped transport. The Import button hover is visible, but its Computer Use click still did not open a picker. Actual picker selection, Explorer drag gestures, export dialogs, high-DPI/input and household acceptance remain open. Native tests are not substituted for these gates. No file associations/context-menu registry entries are installed.

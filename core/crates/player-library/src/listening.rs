@@ -188,6 +188,7 @@ mod tests {
         };
         lib.save_session(&session, true).unwrap();
         drop_migration(&lib.db);
+        super::super::playlist_files::drop_migration(&lib.db);
         lib.db.execute_batch("PRAGMA user_version=8").unwrap();
         drop(lib);
         let lib = Library::open(&db).unwrap();

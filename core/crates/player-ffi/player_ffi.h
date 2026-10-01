@@ -54,6 +54,11 @@ SpiewakSnapshot *spiewak_listening_state(SpiewakCore *);
 SpiewakSnapshot *spiewak_listening_tracks(SpiewakCore *, uint32_t view, uint32_t offset);
 SpiewakSnapshot *spiewak_favorites(SpiewakCore *, const int64_t *ids, size_t count, uint32_t favorite);
 SpiewakSnapshot *spiewak_play_listening(SpiewakCore *, uint32_t view, uint32_t index);
+SpiewakSnapshot *spiewak_import_playlist(SpiewakCore *, const char *path);
+SpiewakSnapshot *spiewak_export_playlist(SpiewakCore *, int64_t id, const char *path, uint32_t relative);
+/* Appends all occurrences without autoplay or adding library roots. */
+SpiewakSnapshot *spiewak_drop_files(SpiewakCore *, const char *const *paths, size_t count);
+SpiewakSnapshot *spiewak_save_queue_playlist(SpiewakCore *, const char *name);
 #ifdef __cplusplus
 }
 #endif
